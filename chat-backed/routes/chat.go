@@ -3,6 +3,7 @@ package routes
 import (
 	"encoding/json"
 	"fmt"
+	"go-chat/models"
 	"go-chat/utils"
 	"net/http"
 	"sync"
@@ -23,10 +24,18 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+// 定义广播消息的结构
+type BroadcastMessage struct {
+	UserID    uint   `json:"user_id"`
+	Username  string `json:"username"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+}
+
 // 全局存储连接
 var (
-	clients   = make(map[*websocket.Conn]bool) //存储活跃的客户端
-	broadcast = make(chan string)              // 广播消息的通道
+	clients   = make(map[*websocket.Conn]bool) // 存储活跃的客户端
+	broadcast = make(chan BroadcastMessage)    // 广播消息的通道，改为结构体类型
 	mutex     sync.RWMutex                     // 读写锁
 )
 
@@ -90,7 +99,12 @@ func WSHandler(c *gin.Context) {
 	}()
 
 	// 发送欢迎消息
-	welcomeMsg := fmt.Sprintf("欢迎 %s 加入聊天室!", username)
+	welcomeMsg := BroadcastMessage{
+		UserID:    0, // 系统消息
+		Username:  "系统",
+		Content:   fmt.Sprintf("欢迎 %s 加入聊天室!", username),
+		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+	}
 	broadcast <- welcomeMsg
 
 	// 监听消息
@@ -100,8 +114,30 @@ func WSHandler(c *gin.Context) {
 			fmt.Printf("读取消息错误: %v\n", err)
 			break
 		}
+
+		// 创建消息实例并保存到数据库
+		message := models.Message{
+			UserID:    userID,
+			Username:  username,
+			Content:   string(msg),
+			CreatedAt: time.Now(),
+		}
+		if err := models.DB.Create(&message).Error; err != nil {
+			fmt.Printf("保存消息到数据库失败: %v\n", err)
+		} else {
+			fmt.Printf("消息已保存到数据库: %s: %s\n", username, string(msg))
+		}
+
+		// 构建广播消息
+		broadcastMsg := BroadcastMessage{
+			UserID:    userID,
+			Username:  username,
+			Content:   string(msg),
+			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+		}
+
 		// 给广播通道发送消息
-		broadcast <- fmt.Sprintf("%s: %s", username, string(msg))
+		broadcast <- broadcastMsg
 	}
 }
 
@@ -113,14 +149,21 @@ func HandleMessages() {
 		for client := range clients {
 			// 发送结构化的消息
 			messageData := map[string]interface{}{
-				"type":    "message",
-				"content": msg,
-				"time":    time.Now().Format("15:04:05"),
+				"type":       "message",
+				"user_id":    msg.UserID,
+				"username":   msg.Username,
+				"content":    msg.Content,
+				"created_at": msg.CreatedAt,
 			}
-			messageJSON, _ := json.Marshal(messageData)
-
-			err := client.WriteMessage(websocket.TextMessage, messageJSON)
+			messageJSON, err := json.Marshal(messageData)
 			if err != nil {
+				fmt.Printf("JSON编码错误: %v\n", err)
+				continue
+			}
+
+			err = client.WriteMessage(websocket.TextMessage, messageJSON)
+			if err != nil {
+				fmt.Printf("发送消息失败: %v\n", err)
 				mutex.Lock()
 				client.Close()
 				delete(clients, client)

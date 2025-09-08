@@ -38,6 +38,7 @@ func main() {
 	r.POST("/register", routes.Register)
 	r.POST("/login", routes.Login)
 	r.GET("/ws", routes.WSHandler)
+	r.GET("/messages", routes.GetMessages)
 
 	log.Println("服务器启动在 :8080")
 	log.Println("允许的前端地址: http://localhost:5173")

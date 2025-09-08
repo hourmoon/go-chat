@@ -54,6 +54,6 @@ func InitDB() {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	// 自动迁移模式
-	DB.AutoMigrate(&User{})
-	fmt.Println("✅ 数据库初始化成功")
+	DB.AutoMigrate(&User{}, &Message{})
+	fmt.Println("✅ 数据库初始化成功，已经创建用户表和消息表")
 }
