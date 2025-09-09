@@ -6,10 +6,17 @@
     </div>
     
     <div class="chat-box" ref="chatBox">
+      <!-- 加载指示器 -->
+      <div v-if="loadingHistory" class="loading-indicator">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>加载历史消息中...</span>
+      </div>
+      
+      <!-- 消息列表 -->
       <div v-for="(msg, index) in messages" :key="index" class="message" :class="{ 'own-message': msg.isOwn }">
         <div class="message-meta">
           <span class="message-sender">{{ msg.sender }}</span>
-          <span class="message-time">{{ msg.time }}</span>
+          <span class="message-time">{{ formatDisplayTime(msg.timestamp) }}</span>
         </div>
         <div class="message-content">{{ msg.content }}</div>
       </div>
@@ -18,7 +25,7 @@
     <div class="chat-input">
       <el-input
         v-model="message"
-        placeholder="输入消息..."
+        placeholder="输入消息并按回车发送..."
         @keyup.enter="sendMessage"
         :disabled="!isConnected"
       >
@@ -45,6 +52,7 @@
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 import request from '../utils/request'
 
 const router = useRouter()
@@ -53,17 +61,20 @@ const messages = ref([])
 const socket = ref(null)
 const isConnected = ref(false)
 const chatBox = ref(null)
+const loadingHistory = ref(false) // 加载状态
 
 // 从 localStorage 获取用户名
 const username = computed(() => localStorage.getItem('username') || '未知用户')
 
 // 获取历史消息
 const fetchHistoryMessages = async () => {
+  loadingHistory.value = true
   try {
     const response = await request.get('/messages?limit=100')
     messages.value = response.map(msg => ({
       content: msg.content,
       sender: msg.username,
+      timestamp: new Date(msg.created_at), // 保存时间戳对象
       time: formatTime(msg.created_at),
       isOwn: msg.username === username.value
     }))
@@ -71,13 +82,32 @@ const fetchHistoryMessages = async () => {
   } catch (error) {
     console.error('获取历史消息失败:', error)
     ElMessage.error('获取历史消息失败')
+  } finally {
+    loadingHistory.value = false
   }
 }
 
-// 格式化时间
+// 格式化存储时间
 const formatTime = (timeString) => {
   const date = new Date(timeString)
   return date.toLocaleTimeString()
+}
+
+// 格式化显示时间（相对时间或简洁格式）
+const formatDisplayTime = (timestamp) => {
+  const now = new Date()
+  const msgTime = new Date(timestamp)
+  const diff = now - msgTime
+  const diffMins = Math.floor(diff / 60000)
+  const diffHours = Math.floor(diff / 3600000)
+  const diffDays = Math.floor(diff / 86400000)
+  
+  if (diffMins < 1) return '刚刚'
+  if (diffMins < 60) return `${diffMins}分钟前`
+  if (diffHours < 24) return `${diffHours}小时前`
+  if (diffDays < 7) return `${diffDays}天前`
+  
+  return msgTime.toLocaleDateString()
 }
 
 // 初始化 WebSocket 连接
@@ -115,7 +145,8 @@ const initWebSocket = () => {
           const newMessage = {
             content: messageData.content,
             sender: messageData.username,
-            time: messageData.created_at,
+            timestamp: new Date(), // 当前时间
+            time: formatTime(new Date()),
             isOwn: messageData.username === username.value
           }
           messages.value.push(newMessage)
@@ -129,7 +160,8 @@ const initWebSocket = () => {
         const newMessage = {
           content: event.data,
           sender: '系统',
-          time: new Date().toLocaleTimeString(),
+          timestamp: new Date(),
+          time: formatTime(new Date()),
           isOwn: false
         }
         messages.value.push(newMessage)
@@ -227,16 +259,27 @@ onUnmounted(() => {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  color: #666;
+}
+
 .message {
   margin-bottom: 15px;
-  padding: 10px;
-  border-radius: 8px;
+  padding: 10px 15px;
+  border-radius: 18px;
   background-color: #e9e9e9;
+  max-width: 80%;
+  word-wrap: break-word;
 }
 
 .own-message {
-  background-color: #d1ecf1;
-  text-align: right;
+  background-color: #1890ff;
+  color: white;
+  margin-left: auto;
 }
 
 .message-meta {
@@ -250,8 +293,16 @@ onUnmounted(() => {
   font-weight: bold;
 }
 
+.own-message .message-sender {
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .message-time {
   color: #666;
+}
+
+.own-message .message-time {
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .message-content {

@@ -18,13 +18,13 @@ func GetMessages(c *gin.Context) {
 	}
 
 	var messages []models.Message
-	// 按创建时间降序获取消息，然后反转顺序，使得最新的消息在最后
+	// 按创建时间降序获取消息
 	if err := models.DB.Order("created_at desc").Limit(limit).Find(&messages).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
 		return
 	}
 
-	// 反转消息顺序，使得最早的消息在前，最新的在后
+	// 反转消息顺序，使最新的消息在最后
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 		messages[i], messages[j] = messages[j], messages[i]
 	}
