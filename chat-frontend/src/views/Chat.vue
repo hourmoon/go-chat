@@ -7,9 +7,11 @@
     
     <div class="chat-box" ref="chatBox">
       <div v-for="(msg, index) in messages" :key="index" class="message" :class="{ 'own-message': msg.isOwn }">
-        <div class="message-sender">{{ msg.sender }}</div>
+        <div class="message-meta">
+          <span class="message-sender">{{ msg.sender }}</span>
+          <span class="message-time">{{ msg.time }}</span>
+        </div>
         <div class="message-content">{{ msg.content }}</div>
-        <div class="message-time">{{ msg.time }}</div>
       </div>
     </div>
     
@@ -43,6 +45,7 @@
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import request from '../utils/request'
 
 const router = useRouter()
 const message = ref('')
@@ -53,6 +56,29 @@ const chatBox = ref(null)
 
 // 从 localStorage 获取用户名
 const username = computed(() => localStorage.getItem('username') || '未知用户')
+
+// 获取历史消息
+const fetchHistoryMessages = async () => {
+  try {
+    const response = await request.get('/messages?limit=100')
+    messages.value = response.map(msg => ({
+      content: msg.content,
+      sender: msg.username,
+      time: formatTime(msg.created_at),
+      isOwn: msg.username === username.value
+    }))
+    scrollToBottom()
+  } catch (error) {
+    console.error('获取历史消息失败:', error)
+    ElMessage.error('获取历史消息失败')
+  }
+}
+
+// 格式化时间
+const formatTime = (timeString) => {
+  const date = new Date(timeString)
+  return date.toLocaleTimeString()
+}
 
 // 初始化 WebSocket 连接
 const initWebSocket = () => {
@@ -88,9 +114,9 @@ const initWebSocket = () => {
         if (messageData.type === 'message') {
           const newMessage = {
             content: messageData.content,
-            sender: messageData.sender || '系统',
-            time: new Date().toLocaleTimeString(),
-            isOwn: false
+            sender: messageData.username,
+            time: messageData.created_at,
+            isOwn: messageData.username === username.value
           }
           messages.value.push(newMessage)
           scrollToBottom()
@@ -98,38 +124,28 @@ const initWebSocket = () => {
           // 处理系统消息
           ElMessage.info(messageData.content)
         }
-      }  catch (error) {
-    console.error('WebSocket 初始化错误:', error)
-    ElMessage.error('连接失败: ' + error.message)
-  }
+      } catch (error) {
+        // 如果不是 JSON，当作普通文本处理
+        const newMessage = {
+          content: event.data,
+          sender: '系统',
+          time: new Date().toLocaleTimeString(),
+          isOwn: false
+        }
+        messages.value.push(newMessage)
+        scrollToBottom()
+      }
     }
     
     socket.value.onerror = (error) => {
       console.error('WebSocket 错误:', error)
-      ElMessage.error('连接错误，3秒后重试...')
+      ElMessage.error('连接错误')
       isConnected.value = false
-      
-      // 3秒后重试
-      setTimeout(() => {
-        if (!isConnected.value) {
-          initWebSocket()
-        }
-      }, 3000)
     }
     
-    socket.value.onclose = (event) => {
-      console.log('WebSocket 连接关闭:', event.code, event.reason)
+    socket.value.onclose = () => {
+      console.log('WebSocket 连接关闭')
       isConnected.value = false
-      
-      // 如果不是正常关闭，尝试重连
-      if (event.code !== 1000) {
-        ElMessage.warning('连接已断开，5秒后重试...')
-        setTimeout(() => {
-          if (!isConnected.value) {
-            initWebSocket()
-          }
-        }, 5000)
-      }
     }
   } catch (error) {
     console.error('WebSocket 初始化错误:', error)
@@ -143,17 +159,7 @@ const sendMessage = () => {
   
   if (socket.value && socket.value.readyState === WebSocket.OPEN) {
     socket.value.send(message.value)
-    
-    // 添加到消息列表（自己的消息）
-    messages.value.push({
-      content: message.value,
-      sender: username.value,
-      time: new Date().toLocaleTimeString(),
-      isOwn: true
-    })
-    
     message.value = ''
-    scrollToBottom()
   } else {
     ElMessage.warning('连接未就绪，请稍后再试')
   }
@@ -180,7 +186,8 @@ const logout = () => {
 
 // 生命周期钩子
 onMounted(() => {
-  initWebSocket()
+  fetchHistoryMessages() // 获取历史消息
+  initWebSocket()        // 初始化 WebSocket 连接
 })
 
 onUnmounted(() => {
@@ -189,7 +196,6 @@ onUnmounted(() => {
   }
 })
 </script>
-
 
 <style scoped>
 .chat-page {
@@ -233,19 +239,23 @@ onUnmounted(() => {
   text-align: right;
 }
 
-.message-sender {
-  font-weight: bold;
-  font-size: 12px;
+.message-meta {
+  display: flex;
+  justify-content: space-between;
   margin-bottom: 5px;
+  font-size: 12px;
 }
 
-.message-content {
-  margin-bottom: 5px;
+.message-sender {
+  font-weight: bold;
 }
 
 .message-time {
-  font-size: 11px;
   color: #666;
+}
+
+.message-content {
+  word-wrap: break-word;
 }
 
 .chat-input {
