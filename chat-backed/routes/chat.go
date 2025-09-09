@@ -16,58 +16,53 @@ import (
 // 升级 HTTP 连接为 WebSocket
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		// 允许所有跨域，或根据需要限制
 		return true
 	},
-	// 添加缓冲区大小配置
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 }
 
 // 定义广播消息的结构
 type BroadcastMessage struct {
+	Type      string `json:"type"`
 	UserID    uint   `json:"user_id"`
 	Username  string `json:"username"`
 	Content   string `json:"content"`
+	Target    uint   `json:"target"` // 0表示群聊，>0表示私聊目标用户ID
 	CreatedAt string `json:"created_at"`
 }
 
 // 全局存储连接
 var (
-	clients   = make(map[*websocket.Conn]bool) // 存储活跃的客户端
-	broadcast = make(chan BroadcastMessage)    // 广播消息的通道，改为结构体类型
-	mutex     sync.RWMutex                     // 读写锁
+	clients   = make(map[*websocket.Conn]bool)
+	broadcast = make(chan BroadcastMessage)
+	mutex     sync.RWMutex
 )
 
 // WebSocket Handler
 func WSHandler(c *gin.Context) {
-	// 升级协议
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil) // 升级 HTTP 连接为 WebSocket
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		fmt.Printf("升级 WebSocket 失败: %v\n", err)
-		fmt.Printf("请求头: %+v\n", c.Request.Header)
 		return
 	}
-	defer conn.Close() // 确保连接关闭时关闭 WebSocket 连接
+	defer conn.Close()
 
 	fmt.Println("WebSocket 连接已建立")
 
 	// 等待客户端发送认证消息
-	_, authMsg, err := conn.ReadMessage() // 读取认证消息
+	_, authMsg, err := conn.ReadMessage()
 	if err != nil {
 		fmt.Printf("读取认证消息失败: %v\n", err)
 		return
 	}
 
-	fmt.Printf("收到认证消息: %s\n", string(authMsg))
-
 	// 解析认证消息
-	var authData struct { // 定义认证消息的结构
-		Type  string `json:"type"`  // 消息类型
-		Token string `json:"token"` // JWT token
+	var authData struct {
+		Type  string `json:"type"`
+		Token string `json:"token"`
 	}
-	if err := json.Unmarshal(authMsg, &authData); err != nil || authData.Type != "auth" { // 解析认证消息
-		fmt.Printf("认证消息格式错误: %v\n", err)
+	if err := json.Unmarshal(authMsg, &authData); err != nil || authData.Type != "auth" {
 		conn.WriteMessage(websocket.TextMessage, []byte("认证消息格式错误"))
 		return
 	}
@@ -75,8 +70,7 @@ func WSHandler(c *gin.Context) {
 	// 验证 JWT token
 	claims, err := utils.ParseJWT(authData.Token)
 	if err != nil {
-		fmt.Printf("Token 无效: %v\n", err)
-		conn.WriteMessage(websocket.TextMessage, []byte("Token 无效: "+err.Error()))
+		conn.WriteMessage(websocket.TextMessage, []byte("Token 无效"))
 		return
 	}
 
@@ -90,22 +84,40 @@ func WSHandler(c *gin.Context) {
 	clients[conn] = true
 	mutex.Unlock()
 
+	// 添加用户到在线列表
+	utils.AddOnlineUser(userID, username, conn)
+
+	// 广播用户上线消息
+	joinMsg := BroadcastMessage{
+		Type:      "user_joined",
+		UserID:    userID,
+		Username:  username,
+		Content:   fmt.Sprintf("%s 加入了聊天室", username),
+		Target:    0,
+		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+	}
+	broadcast <- joinMsg
+
 	// 确保连接关闭时从客户端映射中移除
 	defer func() {
+		utils.RemoveOnlineUser(userID)
+
+		// 广播用户下线消息
+		leaveMsg := BroadcastMessage{
+			Type:      "user_left",
+			UserID:    userID,
+			Username:  username,
+			Content:   fmt.Sprintf("%s 离开了聊天室", username),
+			Target:    0,
+			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+		}
+		broadcast <- leaveMsg
+
 		mutex.Lock()
 		delete(clients, conn)
 		mutex.Unlock()
 		fmt.Printf("❌ 用户断开: %s\n", username)
 	}()
-
-	// 发送欢迎消息
-	welcomeMsg := BroadcastMessage{
-		UserID:    0, // 系统消息
-		Username:  "系统",
-		Content:   fmt.Sprintf("欢迎 %s 加入聊天室!", username),
-		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
-	}
-	broadcast <- welcomeMsg
 
 	// 监听消息
 	for {
@@ -115,24 +127,48 @@ func WSHandler(c *gin.Context) {
 			break
 		}
 
+		// 解析消息内容（可能是普通文本或JSON）
+		var messageData map[string]interface{}
+		if err := json.Unmarshal(msg, &messageData); err != nil {
+			// 如果不是JSON，当作普通文本处理
+			messageData = map[string]interface{}{
+				"content": string(msg),
+				"target":  0, // 默认群聊
+			}
+		}
+
+		// 获取消息内容和目标
+		content, ok := messageData["content"].(string)
+		if !ok {
+			content = string(msg)
+		}
+
+		target := uint(0)
+		if targetVal, ok := messageData["target"].(float64); ok {
+			target = uint(targetVal)
+		}
+
 		// 创建消息实例并保存到数据库
 		message := models.Message{
 			UserID:    userID,
 			Username:  username,
-			Content:   string(msg),
+			Content:   content,
 			CreatedAt: time.Now(),
 		}
+
 		if err := models.DB.Create(&message).Error; err != nil {
 			fmt.Printf("保存消息到数据库失败: %v\n", err)
 		} else {
-			fmt.Printf("消息已保存到数据库: %s: %s\n", username, string(msg))
+			fmt.Printf("消息已保存到数据库: %s: %s\n", username, content)
 		}
 
 		// 构建广播消息
 		broadcastMsg := BroadcastMessage{
+			Type:      "message",
 			UserID:    userID,
 			Username:  username,
-			Content:   string(msg),
+			Content:   content,
+			Target:    target,
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
 
@@ -145,31 +181,52 @@ func WSHandler(c *gin.Context) {
 func HandleMessages() {
 	for {
 		msg := <-broadcast
-		mutex.RLock()
-		for client := range clients {
-			// 发送结构化的消息
-			messageData := map[string]interface{}{
-				"type":       "message",
-				"user_id":    msg.UserID,
-				"username":   msg.Username,
-				"content":    msg.Content,
-				"created_at": msg.CreatedAt,
-			}
-			messageJSON, err := json.Marshal(messageData)
-			if err != nil {
-				fmt.Printf("JSON编码错误: %v\n", err)
-				continue
-			}
 
-			err = client.WriteMessage(websocket.TextMessage, messageJSON)
-			if err != nil {
-				fmt.Printf("发送消息失败: %v\n", err)
-				mutex.Lock()
-				client.Close()
-				delete(clients, client)
-				mutex.Unlock()
+		// 根据消息类型处理
+		if msg.Type == "user_joined" || msg.Type == "user_left" {
+			// 用户上下线消息，广播给所有人
+			mutex.RLock()
+			for client := range clients {
+				sendMessageToClient(client, msg)
 			}
+			mutex.RUnlock()
+		} else if msg.Target == 0 {
+			// 群聊消息，发送给所有用户
+			mutex.RLock()
+			for client := range clients {
+				sendMessageToClient(client, msg)
+			}
+			mutex.RUnlock()
+		} else {
+			// 私聊消息，只发送给目标用户和发送者
+			utils.OnlineUsers.RLock()
+			// 发送给目标用户
+			if targetUser, exists := utils.OnlineUsers.Users[msg.Target]; exists {
+				sendMessageToClient(targetUser.Conn, msg)
+			}
+			// 发送给发送者
+			if sender, exists := utils.OnlineUsers.Users[msg.UserID]; exists {
+				sendMessageToClient(sender.Conn, msg)
+			}
+			utils.OnlineUsers.RUnlock()
 		}
-		mutex.RUnlock()
+	}
+}
+
+// 辅助函数：发送消息到客户端
+func sendMessageToClient(client *websocket.Conn, msg BroadcastMessage) {
+	messageJSON, err := json.Marshal(msg)
+	if err != nil {
+		fmt.Printf("JSON编码错误: %v\n", err)
+		return
+	}
+
+	err = client.WriteMessage(websocket.TextMessage, messageJSON)
+	if err != nil {
+		fmt.Printf("发送消息失败: %v\n", err)
+		mutex.Lock()
+		client.Close()
+		delete(clients, client)
+		mutex.Unlock()
 	}
 }

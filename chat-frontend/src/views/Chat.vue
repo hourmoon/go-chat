@@ -1,49 +1,88 @@
 <template>
-  <div class="chat-page">
-    <div class="chat-header">
-      <h2>聊天室 - {{ username }}</h2>
-      <el-button @click="logout" type="danger" size="small">退出</el-button>
+  <div class="chat-container">
+    <!-- 在线用户侧边栏 -->
+    <div class="online-users-sidebar">
+      <h3>在线用户 ({{ onlineUsers.length }})</h3>
+      <div class="user-list">
+        <div 
+          v-for="user in onlineUsers" 
+          :key="user.id"
+          class="user-item"
+          :class="{ 
+            active: privateTarget === user.id,
+            'current-user': user.id === currentUserID
+          }"
+          @click="startPrivateChat(user)"
+        >
+          <span class="user-status"></span>
+          {{ user.username }}
+          <span v-if="user.id === currentUserID" class="you-label">(我)</span>
+        </div>
+      </div>
     </div>
     
-    <div class="chat-box" ref="chatBox">
-      <!-- 加载指示器 -->
-      <div v-if="loadingHistory" class="loading-indicator">
-        <el-icon class="is-loading"><Loading /></el-icon>
-        <span>加载历史消息中...</span>
+    <!-- 主聊天区域 -->
+    <div class="main-chat-area">
+      <div class="chat-header">
+        <h2>
+          {{ privateTarget ? `与 ${privateTargetName} 的私聊` : '群聊' }}
+          <el-button v-if="privateTarget" @click="exitPrivateChat" size="small" type="info">
+            返回群聊
+          </el-button>
+        </h2>
+        <el-button @click="logout" type="danger" size="small">退出</el-button>
       </div>
       
-      <!-- 消息列表 -->
-      <div v-for="(msg, index) in messages" :key="index" class="message" :class="{ 'own-message': msg.isOwn }">
-        <div class="message-meta">
-          <span class="message-sender">{{ msg.sender }}</span>
-          <span class="message-time">{{ formatDisplayTime(msg.timestamp) }}</span>
+      <div class="chat-box" ref="chatBox">
+        <!-- 加载指示器 -->
+        <div v-if="loadingHistory" class="loading-indicator">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>加载历史消息中...</span>
         </div>
-        <div class="message-content">{{ msg.content }}</div>
+        
+        <!-- 消息列表 -->
+        <div 
+          v-for="(msg, index) in messages" 
+          :key="index" 
+          class="message" 
+          :class="{ 
+            'own-message': msg.isOwn, 
+            'private-message': msg.isPrivate,
+            'system-message': msg.isSystem
+          }"
+        >
+          <div class="message-meta">
+            <span class="message-sender">{{ msg.sender }}</span>
+            <span class="message-time">{{ formatDisplayTime(msg.timestamp) }}</span>
+          </div>
+          <div class="message-content">{{ msg.content }}</div>
+          <div v-if="msg.isPrivate" class="private-label">私聊</div>
+        </div>
       </div>
-    </div>
-    
-    <div class="chat-input">
-      <el-input
-        v-model="message"
-        placeholder="输入消息并按回车发送..."
-        @keyup.enter="sendMessage"
-        :disabled="!isConnected"
-      >
-        <template #append>
-          <el-button 
-            @click="sendMessage" 
-            :disabled="!message.trim() || !isConnected"
-            type="primary"
-          >
-            发送
-          </el-button>
-        </template>
-      </el-input>
-    </div>
-    
-    <div class="connection-status">
-      <span :class="['status-dot', isConnected ? 'connected' : 'disconnected']"></span>
-      {{ isConnected ? '已连接' : '未连接' }}
+      
+      <div class="chat-input">
+        <el-input
+          v-model="message"
+          :placeholder="privateTarget ? `发送给 ${privateTargetName}...` : '输入消息并按回车发送...'"
+          @keyup.enter="sendMessage"
+          :disabled="!isConnected"
+        >
+          <template #append>
+            <el-button 
+              @click="sendMessage" 
+              :disabled="!message.trim() || !isConnected"
+              type="primary"
+            >
+              发送
+            </el-button>
+          </template>
+        </el-input>
+      </div>
+      
+      <div class="connection-status">
+        <span :class="['status-dot', isConnected ? 'connected' : 'disconnected']"></span>
+        {{ isConnected ? '已连接' : '未连接' }}
+      </div>
     </div>
   </div>
 </template>
@@ -61,7 +100,12 @@ const messages = ref([])
 const socket = ref(null)
 const isConnected = ref(false)
 const chatBox = ref(null)
-const loadingHistory = ref(false) // 加载状态
+const loadingHistory = ref(false)
+const onlineUsers = ref([])
+const privateTarget = ref(0) // 0表示群聊，>0表示私聊目标用户ID
+const privateTargetName = ref('')
+const currentUserID = ref(0)
+const onlineUsersRefreshInterval = ref(null)
 
 // 从 localStorage 获取用户名
 const username = computed(() => localStorage.getItem('username') || '未知用户')
@@ -74,9 +118,11 @@ const fetchHistoryMessages = async () => {
     messages.value = response.map(msg => ({
       content: msg.content,
       sender: msg.username,
-      timestamp: new Date(msg.created_at), // 保存时间戳对象
+      timestamp: new Date(msg.created_at),
       time: formatTime(msg.created_at),
-      isOwn: msg.username === username.value
+      isOwn: msg.username === username.value,
+      isPrivate: false,
+      isSystem: false
     }))
     scrollToBottom()
   } catch (error) {
@@ -85,6 +131,36 @@ const fetchHistoryMessages = async () => {
   } finally {
     loadingHistory.value = false
   }
+}
+
+// 获取在线用户列表
+const fetchOnlineUsers = async () => {
+  try {
+    const response = await request.get('/online-users')
+    if (response.success) {
+      onlineUsers.value = response.data
+    } else {
+      onlineUsers.value = response
+    }
+  } catch (error) {
+    console.error('获取在线用户失败:', error)
+  }
+}
+
+// 开始私聊
+const startPrivateChat = (user) => {
+  if (user.id === currentUserID.value) return // 不能和自己私聊
+  
+  privateTarget.value = user.id
+  privateTargetName.value = user.username
+  ElMessage.info(`开始与 ${user.username} 私聊`)
+}
+
+// 退出私聊
+const exitPrivateChat = () => {
+  privateTarget.value = 0
+  privateTargetName.value = ''
+  ElMessage.info('已返回群聊')
 }
 
 // 格式化存储时间
@@ -140,29 +216,55 @@ const initWebSocket = () => {
         // 尝试解析 JSON 消息
         const messageData = JSON.parse(event.data)
         
-        // 处理不同类型的消息
+        // 处理用户上下线消息
+        if (messageData.type === 'user_joined' || messageData.type === 'user_left') {
+          fetchOnlineUsers() // 刷新在线用户列表
+          // 显示系统消息
+          const newMessage = {
+            content: messageData.content,
+            sender: '系统',
+            timestamp: new Date(),
+            time: formatTime(new Date()),
+            isOwn: false,
+            isPrivate: false,
+            isSystem: true
+          }
+          messages.value.push(newMessage)
+          scrollToBottom()
+          return
+        }
+        
+        // 处理普通消息
         if (messageData.type === 'message') {
           const newMessage = {
             content: messageData.content,
             sender: messageData.username,
-            timestamp: new Date(), // 当前时间
-            time: formatTime(new Date()),
-            isOwn: messageData.username === username.value
+            timestamp: new Date(messageData.created_at || new Date()),
+            time: formatTime(new Date(messageData.created_at || new Date())),
+            isOwn: messageData.user_id === currentUserID.value,
+            isPrivate: messageData.target > 0 && messageData.target !== currentUserID.value,
+            isSystem: false
           }
-          messages.value.push(newMessage)
-          scrollToBottom()
-        } else if (messageData.type === 'system') {
-          // 处理系统消息
-          ElMessage.info(messageData.content)
+          
+          // 如果是私聊消息，只有相关用户能看到
+          if (!messageData.target || 
+              messageData.target === currentUserID.value || 
+              messageData.user_id === currentUserID.value) {
+            messages.value.push(newMessage)
+            scrollToBottom()
+          }
         }
       } catch (error) {
-        // 如果不是 JSON，当作普通文本处理
+        // 处理非JSON消息
+        console.error('消息解析错误:', error)
         const newMessage = {
           content: event.data,
           sender: '系统',
           timestamp: new Date(),
           time: formatTime(new Date()),
-          isOwn: false
+          isOwn: false,
+          isPrivate: false,
+          isSystem: true
         }
         messages.value.push(newMessage)
         scrollToBottom()
@@ -190,7 +292,14 @@ const sendMessage = () => {
   if (!message.value.trim() || !isConnected.value) return
   
   if (socket.value && socket.value.readyState === WebSocket.OPEN) {
-    socket.value.send(message.value)
+    // 构建消息对象
+    const messageData = {
+      type: 'message',
+      content: message.value,
+      target: privateTarget.value // 添加目标字段
+    }
+    
+    socket.value.send(JSON.stringify(messageData))
     message.value = ''
   } else {
     ElMessage.warning('连接未就绪，请稍后再试')
@@ -218,11 +327,29 @@ const logout = () => {
 
 // 生命周期钩子
 onMounted(() => {
-  fetchHistoryMessages() // 获取历史消息
-  initWebSocket()        // 初始化 WebSocket 连接
+  fetchHistoryMessages()
+  initWebSocket()
+  
+  // 从token中解析用户ID（这里需要根据你的JWT结构进行调整）
+  const token = localStorage.getItem('token')
+  if (token) {
+    try {
+      // 简单解析JWT获取用户ID（实际应用中应该使用更安全的方式）
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      currentUserID.value = payload.userID || 0
+    } catch (error) {
+      console.error('解析用户ID失败:', error)
+    }
+  }
+  
+  // 定期刷新在线用户列表
+  onlineUsersRefreshInterval.value = setInterval(fetchOnlineUsers, 5000)
 })
 
 onUnmounted(() => {
+  if (onlineUsersRefreshInterval.value) {
+    clearInterval(onlineUsersRefreshInterval.value)
+  }
   if (socket.value) {
     socket.value.close()
   }
@@ -230,14 +357,75 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.chat-page {
+.chat-container {
+  display: flex;
+  height: 100vh;
+  background-color: #f5f5f5;
+}
+
+.online-users-sidebar {
+  width: 250px;
+  background-color: white;
+  border-right: 1px solid #e0e0e0;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.online-users-sidebar h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.user-list {
   display: flex;
   flex-direction: column;
-  height: 100vh;
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 20px;
+  gap: 8px;
+}
+
+.user-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.user-item:hover {
+  background-color: #f0f0f0;
+}
+
+.user-item.active {
+  background-color: #e3f2fd;
+  font-weight: bold;
+}
+
+.user-item.current-user {
   background-color: #f5f5f5;
+  cursor: default;
+}
+
+.user-status {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #4caf50;
+  margin-right: 8px;
+}
+
+.you-label {
+  margin-left: auto;
+  font-size: 12px;
+  color: #999;
+}
+
+.main-chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
 }
 
 .chat-header {
@@ -274,12 +462,25 @@ onUnmounted(() => {
   background-color: #e9e9e9;
   max-width: 80%;
   word-wrap: break-word;
+  position: relative;
 }
 
 .own-message {
   background-color: #1890ff;
   color: white;
   margin-left: auto;
+}
+
+.private-message {
+  border: 2px solid #ffa500;
+}
+
+.system-message {
+  background-color: #f0f0f0;
+  font-style: italic;
+  margin: 0 auto;
+  text-align: center;
+  max-width: 95%;
 }
 
 .message-meta {
@@ -307,6 +508,17 @@ onUnmounted(() => {
 
 .message-content {
   word-wrap: break-word;
+}
+
+.private-label {
+  position: absolute;
+  top: -8px;
+  right: 10px;
+  background-color: #ffa500;
+  color: white;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
 }
 
 .chat-input {
