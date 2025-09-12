@@ -24,12 +24,16 @@ var upgrader = websocket.Upgrader{
 
 // 定义广播消息的结构
 type BroadcastMessage struct {
-	Type      string `json:"type"`
-	UserID    uint   `json:"user_id"`
-	Username  string `json:"username"`
-	Content   string `json:"content"`
-	Target    uint   `json:"target"` // 0表示群聊，>0表示私聊目标用户ID
-	CreatedAt string `json:"created_at"`
+	Type        string `json:"type"`
+	UserID      uint   `json:"user_id"`
+	Username    string `json:"username"`
+	Content     string `json:"content"`
+	MessageType string `json:"message_type"` // text, image, file
+	FileURL     string `json:"file_url"`
+	FileName    string `json:"file_name"`
+	FileSize    int64  `json:"file_size"`
+	Target      uint   `json:"target"` // 0表示群聊，>0表示私聊目标用户ID
+	CreatedAt   string `json:"created_at"`
 }
 
 // 全局存储连接
@@ -143,6 +147,26 @@ func WSHandler(c *gin.Context) {
 			content = string(msg)
 		}
 
+		messageType := "text"
+		if typeVal, ok := messageData["messageType"].(string); ok {
+			messageType = typeVal
+		}
+
+		fileURL := ""
+		if urlVal, ok := messageData["fileUrl"].(string); ok {
+			fileURL = urlVal
+		}
+
+		fileName := ""
+		if nameVal, ok := messageData["fileName"].(string); ok {
+			fileName = nameVal
+		}
+
+		fileSize := int64(0)
+		if sizeVal, ok := messageData["fileSize"].(float64); ok {
+			fileSize = int64(sizeVal)
+		}
+
 		target := uint(0)
 		if targetVal, ok := messageData["target"].(float64); ok {
 			target = uint(targetVal)
@@ -150,10 +174,14 @@ func WSHandler(c *gin.Context) {
 
 		// 创建消息实例并保存到数据库
 		message := models.Message{
-			UserID:    userID,
-			Username:  username,
-			Content:   content,
-			CreatedAt: time.Now(),
+			UserID:      userID,
+			Username:    username,
+			Content:     content,
+			MessageType: messageType,
+			FileURL:     fileURL,
+			FileName:    fileName,
+			FileSize:    fileSize,
+			CreatedAt:   time.Now(),
 		}
 
 		if err := models.DB.Create(&message).Error; err != nil {
@@ -164,14 +192,17 @@ func WSHandler(c *gin.Context) {
 
 		// 构建广播消息
 		broadcastMsg := BroadcastMessage{
-			Type:      "message",
-			UserID:    userID,
-			Username:  username,
-			Content:   content,
-			Target:    target,
-			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+			Type:        "message",
+			UserID:      userID,
+			Username:    username,
+			Content:     content,
+			MessageType: messageType,
+			FileURL:     fileURL,
+			FileName:    fileName,
+			FileSize:    fileSize,
+			Target:      target,
+			CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
 		}
-
 		// 给广播通道发送消息
 		broadcast <- broadcastMsg
 	}

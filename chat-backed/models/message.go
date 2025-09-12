@@ -2,20 +2,24 @@ package models
 
 import (
 	"fmt"
-
 	"time"
 )
 
 type Message struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	UserID    uint      `json:"user_id"`
-	Username  string    `json:"username"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	UserID      uint      `json:"user_id"`
+	Username    string    `json:"username"`
+	Content     string    `json:"content"`
+	MessageType string    `json:"message_type" gorm:"default:'text'"` // 消息类型: text, image, file
+	FileURL     string    `json:"file_url"`                           // 文件URL
+	FileName    string    `json:"file_name"`                          // 文件名
+	FileSize    int64     `json:"file_size"`                          // 文件大小
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // 添加TableName方法指定表名（可选）
 func (Message) TableName() string {
+	// 返回表名
 	return "messages"
 }
 

@@ -8,12 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetMessages 获取历史消息（支持分页和游标）
+// GetMessages 获取历史消息（支持分页）
 func GetMessages(c *gin.Context) {
 	// 从查询参数中获取分页参数
 	pageStr := c.DefaultQuery("page", "1")
 	pageSizeStr := c.DefaultQuery("pageSize", "50")
-	lastIDStr := c.Query("last_id") // 新增：最后一条消息的ID，用于基于游标的分页
 
 	page, err := strconv.Atoi(pageStr)
 	if err != nil || page < 1 {
@@ -30,6 +29,9 @@ func GetMessages(c *gin.Context) {
 		pageSize = 100
 	}
 
+	// 计算偏移量
+	offset := (page - 1) * pageSize
+
 	var messages []models.Message
 	var total int64
 
@@ -39,30 +41,10 @@ func GetMessages(c *gin.Context) {
 		return
 	}
 
-	// 使用基于游标的分页（性能更好）
-	if lastIDStr != "" {
-		lastID, err := strconv.Atoi(lastIDStr)
-		if err == nil {
-			// 获取比lastID更早的消息
-			if err := models.DB.Where("id < ?", lastID).Order("created_at desc").Limit(pageSize).Find(&messages).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
-				return
-			}
-		} else {
-			// 如果lastID解析失败，使用传统分页
-			offset := (page - 1) * pageSize
-			if err := models.DB.Order("created_at desc").Offset(offset).Limit(pageSize).Find(&messages).Error; err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
-				return
-			}
-		}
-	} else {
-		// 传统分页（用于第一页）
-		offset := (page - 1) * pageSize
-		if err := models.DB.Order("created_at desc").Offset(offset).Limit(pageSize).Find(&messages).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
-			return
-		}
+	// 按创建时间降序获取消息
+	if err := models.DB.Order("created_at desc").Offset(offset).Limit(pageSize).Find(&messages).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
+		return
 	}
 
 	// 反转消息顺序，使最新的消息在最后

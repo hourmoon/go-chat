@@ -33,7 +33,13 @@
         <el-button @click="logout" type="danger" size="small">退出</el-button>
       </div>
       
-      <div class="chat-box" ref="chatBox">
+      <div class="chat-box" ref="chatBox" @scroll="handleScroll">
+        <!-- 加载更多指示器 -->
+        <div v-if="isLoadingMore" class="loading-more">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>加载更多消息...</span>
+        </div>
+        
         <!-- 加载指示器 -->
         <div v-if="loadingHistory" class="loading-indicator">
           <el-icon class="is-loading"><Loading /></el-icon>
@@ -55,7 +61,27 @@
             <span class="message-sender">{{ msg.sender }}</span>
             <span class="message-time">{{ formatDisplayTime(msg.timestamp) }}</span>
           </div>
-          <div class="message-content">{{ msg.content }}</div>
+          
+          <!-- 文本消息 -->
+          <div v-if="msg.messageType === 'text'" class="message-content">{{ msg.content }}</div>
+          
+          <!-- 图片消息 -->
+          <div v-else-if="msg.messageType === 'image'" class="image-message">
+            <img :src="getFullFileUrl(msg.fileUrl)" :alt="msg.fileName" @load="scrollToBottom" />
+            <div class="image-info">{{ msg.fileName }}</div>
+          </div>
+          
+          <!-- 文件消息 -->
+          <div v-else-if="msg.messageType === 'file'" class="file-message">
+            <div class="file-icon">
+              <el-icon><Document /></el-icon>
+            </div>
+            <div class="file-info">
+              <a :href="getFullFileUrl(msg.fileUrl)" target="_blank" class="file-name">{{ msg.fileName }}</a>
+              <div class="file-size">{{ formatFileSize(msg.fileSize) }}</div>
+            </div>
+          </div>
+          
           <div v-if="msg.isPrivate" class="private-label">私聊</div>
         </div>
       </div>
@@ -67,6 +93,18 @@
           @keyup.enter="sendMessage"
           :disabled="!isConnected"
         >
+          <template #prepend>
+            <el-upload
+              action="#"
+              :show-file-list="false"
+              :before-upload="beforeUpload"
+              :http-request="handleUpload"
+            >
+              <el-button :disabled="!isConnected">
+                <el-icon><Upload /></el-icon>
+              </el-button>
+            </el-upload>
+          </template>
           <template #append>
             <el-button 
               @click="sendMessage" 
@@ -91,7 +129,7 @@
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Loading } from '@element-plus/icons-vue'
+import { Loading, Upload, Document } from '@element-plus/icons-vue'
 import request from '../utils/request'
 
 const router = useRouter()
@@ -107,29 +145,76 @@ const privateTargetName = ref('')
 const currentUserID = ref(0)
 const onlineUsersRefreshInterval = ref(null)
 
+// 添加分页相关状态变量
+const currentPage = ref(1)
+const hasMoreMessages = ref(true)
+const isLoadingMore = ref(false)
+
 // 从 localStorage 获取用户名
 const username = computed(() => localStorage.getItem('username') || '未知用户')
 
+// 获取完整的文件URL
+const getFullFileUrl = (fileUrl) => {
+  if (!fileUrl) return ''
+  if (fileUrl.startsWith('http')) return fileUrl
+  return `http://localhost:8080${fileUrl}`
+}
+
 // 获取历史消息
-const fetchHistoryMessages = async () => {
-  loadingHistory.value = true
+const fetchHistoryMessages = async (loadMore = false) => {
+  if (loadMore) {
+    isLoadingMore.value = true
+    currentPage.value += 1
+  } else {
+    loadingHistory.value = true
+    currentPage.value = 1
+    hasMoreMessages.value = true
+  }
+  
   try {
-    const response = await request.get('/messages?limit=100')
-    messages.value = response.map(msg => ({
+    const response = await request.get(`/messages?page=${currentPage.value}&pageSize=50`)
+    
+    const newMessages = response.messages.map(msg => ({
+      id: msg.id,
       content: msg.content,
       sender: msg.username,
       timestamp: new Date(msg.created_at),
       time: formatTime(msg.created_at),
       isOwn: msg.username === username.value,
       isPrivate: false,
-      isSystem: false
+      isSystem: false,
+      messageType: msg.message_type || 'text',
+      fileUrl: msg.file_url,
+      fileName: msg.file_name,
+      fileSize: msg.file_size
     }))
-    scrollToBottom()
+    
+    if (loadMore) {
+      // 将新消息添加到列表开头
+      messages.value = [...newMessages, ...messages.value]
+    } else {
+      messages.value = newMessages
+      scrollToBottom()
+    }
+    
+    // 检查是否还有更多消息
+    hasMoreMessages.value = currentPage.value < response.pagination.totalPages
   } catch (error) {
     console.error('获取历史消息失败:', error)
     ElMessage.error('获取历史消息失败')
   } finally {
     loadingHistory.value = false
+    isLoadingMore.value = false
+  }
+}
+
+// 添加滚动监听，实现无限滚动
+const handleScroll = () => {
+  if (!chatBox.value || isLoadingMore.value || !hasMoreMessages.value) return
+  
+  const scrollTop = chatBox.value.scrollTop
+  if (scrollTop < 100) {
+    fetchHistoryMessages(true)
   }
 }
 
@@ -145,6 +230,76 @@ const fetchOnlineUsers = async () => {
   } catch (error) {
     console.error('获取在线用户失败:', error)
   }
+}
+
+// 文件上传前的验证
+const beforeUpload = (file) => {
+  const isLt10M = file.size / 1024 / 1024 < 10
+  if (!isLt10M) {
+    ElMessage.error('文件大小不能超过10MB!')
+    return false
+  }
+  return true
+}
+
+// 处理文件上传
+const handleUpload = async (options) => {
+  const formData = new FormData()
+  formData.append('file', options.file)
+  
+  try {
+    const token = localStorage.getItem('token')
+    const response = await request.post('/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    
+    if (response.success) {
+      // 发送文件消息
+      sendFileMessage(response.file_url, response.file_name, response.file_size)
+    } else {
+      ElMessage.error('文件上传失败')
+    }
+  } catch (error) {
+    console.error('文件上传错误:', error)
+    ElMessage.error('文件上传失败')
+  }
+}
+
+// 发送文件消息
+const sendFileMessage = (fileUrl, fileName, fileSize) => {
+  if (!isConnected.value) return
+  
+  // 确定消息类型
+  const messageType = fileName.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i) ? 'image' : 'file'
+  
+  if (socket.value && socket.value.readyState === WebSocket.OPEN) {
+    const messageData = {
+      type: 'message',
+      content: fileName,
+      messageType: messageType,
+      fileUrl: fileUrl,
+      fileName: fileName,
+      fileSize: fileSize,
+      target: privateTarget.value
+    }
+    
+    socket.value.send(JSON.stringify(messageData))
+    ElMessage.success('文件发送成功')
+  } else {
+    ElMessage.warning('连接未就绪，请稍后再试')
+  }
+}
+
+// 格式化文件大小
+const formatFileSize = (bytes) => {
+  if (bytes === 0) return '0 Bytes'
+  const k = 1024
+  const sizes = ['Bytes', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
 // 开始私聊
@@ -243,7 +398,11 @@ const initWebSocket = () => {
             time: formatTime(new Date(messageData.created_at || new Date())),
             isOwn: messageData.user_id === currentUserID.value,
             isPrivate: messageData.target > 0 && messageData.target !== currentUserID.value,
-            isSystem: false
+            isSystem: false,
+            messageType: messageData.message_type || 'text',
+            fileUrl: messageData.file_url,
+            fileName: messageData.file_name,
+            fileSize: messageData.file_size
           }
           
           // 如果是私聊消息，只有相关用户能看到
@@ -353,6 +512,9 @@ onUnmounted(() => {
   if (socket.value) {
     socket.value.close()
   }
+  if (chatBox.value) {
+    chatBox.value.removeEventListener('scroll', handleScroll)
+  }
 })
 </script>
 
@@ -447,6 +609,17 @@ onUnmounted(() => {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
+/* 添加加载更多样式 */
+.loading-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  color: #666;
+  background-color: #f9f9f9;
+  border-bottom: 1px solid #eee;
+}
+
 .loading-indicator {
   display: flex;
   align-items: center;
@@ -508,6 +681,59 @@ onUnmounted(() => {
 
 .message-content {
   word-wrap: break-word;
+}
+
+/* 图片消息样式 */
+.image-message {
+  max-width: 300px;
+}
+
+.image-message img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+.image-info {
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
+
+/* 文件消息样式 */
+.file-message {
+  display: flex;
+  align-items: center;
+  padding: 10px;
+  background-color: #f9f9f9;
+  border-radius: 6px;
+  max-width: 300px;
+}
+
+.file-icon {
+  margin-right: 10px;
+  font-size: 24px;
+  color: #409EFF;
+}
+
+.file-info {
+  flex: 1;
+}
+
+.file-name {
+  display: block;
+  font-weight: bold;
+  color: #409EFF;
+  text-decoration: none;
+  margin-bottom: 5px;
+}
+
+.file-name:hover {
+  text-decoration: underline;
+}
+
+.file-size {
+  font-size: 12px;
+  color: #666;
 }
 
 .private-label {

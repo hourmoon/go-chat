@@ -37,6 +37,9 @@ func main() {
 	r.GET("/ws", routes.WSHandler)
 	r.GET("/messages", routes.GetMessages)
 	r.GET("/online-users", routes.GetOnlineUsers)
+	// 添加文件上传路由
+	r.POST("/upload", middleware.JWTAuthMiddleware(), routes.UploadFile)
+	r.GET("/uploads/:filename", routes.ServeFile)
 
 	log.Println("服务器启动在 :8080")
 	if err := r.Run(":8080"); err != nil {
