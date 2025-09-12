@@ -60,7 +60,7 @@ func CleanInactiveUsers() {
 	for range ticker.C {
 		OnlineUsers.Lock()
 		for userID, user := range OnlineUsers.Users {
-			if time.Since(user.LastSeen) > 5*time.Minute {
+			if time.Since(user.LastSeen) > 10*time.Minute {
 				delete(OnlineUsers.Users, userID)
 			}
 		}

@@ -8,20 +8,61 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetMessages 获取历史消息
+// GetMessages 获取历史消息（支持分页和游标）
 func GetMessages(c *gin.Context) {
-	// 从查询参数中获取limit，默认50条
-	limitStr := c.DefaultQuery("limit", "50")
-	limit, err := strconv.Atoi(limitStr)
-	if err != nil {
-		limit = 50
+	// 从查询参数中获取分页参数
+	pageStr := c.DefaultQuery("page", "1")
+	pageSizeStr := c.DefaultQuery("pageSize", "50")
+	lastIDStr := c.Query("last_id") // 新增：最后一条消息的ID，用于基于游标的分页
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	pageSize, err := strconv.Atoi(pageSizeStr)
+	if err != nil || pageSize < 1 {
+		pageSize = 50
+	}
+
+	// 限制每页最大消息数
+	if pageSize > 100 {
+		pageSize = 100
 	}
 
 	var messages []models.Message
-	// 按创建时间降序获取消息
-	if err := models.DB.Order("created_at desc").Limit(limit).Find(&messages).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
+	var total int64
+
+	// 获取总消息数
+	if err := models.DB.Model(&models.Message{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息总数失败"})
 		return
+	}
+
+	// 使用基于游标的分页（性能更好）
+	if lastIDStr != "" {
+		lastID, err := strconv.Atoi(lastIDStr)
+		if err == nil {
+			// 获取比lastID更早的消息
+			if err := models.DB.Where("id < ?", lastID).Order("created_at desc").Limit(pageSize).Find(&messages).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
+				return
+			}
+		} else {
+			// 如果lastID解析失败，使用传统分页
+			offset := (page - 1) * pageSize
+			if err := models.DB.Order("created_at desc").Offset(offset).Limit(pageSize).Find(&messages).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
+				return
+			}
+		}
+	} else {
+		// 传统分页（用于第一页）
+		offset := (page - 1) * pageSize
+		if err := models.DB.Order("created_at desc").Offset(offset).Limit(pageSize).Find(&messages).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
+			return
+		}
 	}
 
 	// 反转消息顺序，使最新的消息在最后
@@ -29,5 +70,22 @@ func GetMessages(c *gin.Context) {
 		messages[i], messages[j] = messages[j], messages[i]
 	}
 
-	c.JSON(http.StatusOK, messages)
+	// 计算总页数
+	totalPages := int(total) / pageSize
+	if int(total)%pageSize > 0 {
+		totalPages++
+	}
+
+	// 返回分页响应
+	c.JSON(http.StatusOK, gin.H{
+		"messages": messages,
+		"pagination": gin.H{
+			"page":       page,
+			"pageSize":   pageSize,
+			"total":      total,
+			"totalPages": totalPages,
+			"hasNext":    page < totalPages,
+			"hasPrev":    page > 1,
+		},
+	})
 }

@@ -55,5 +55,7 @@ func InitDB() {
 
 	// 自动迁移模式
 	DB.AutoMigrate(&User{}, &Message{})
+
+	CreateMessageIndexes() // 创建消息表的索引
 	fmt.Println("✅ 数据库初始化成功，已经创建用户表和消息表")
 }
