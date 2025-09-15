@@ -14,9 +14,23 @@
           }"
           @click="startPrivateChat(user)"
         >
-          <span class="user-status"></span>
-          {{ user.username }}
-          <span v-if="user.id === currentUserID" class="you-label">(我)</span>
+          <div class="user-avatar">
+            <img 
+              :src="user.avatar ? getFullAvatarUrl(user.avatar) : defaultAvatar" 
+              :alt="user.username"
+            />
+            <span :class="['user-status', user.status]"></span>
+          </div>
+          <div class="user-info">
+            <div class="user-name">{{ user.username }}</div>
+            <div class="user-bio" v-if="user.bio">{{ user.bio }}</div>
+            <div class="user-status-text">
+              <span :class="['status-text', user.status]">
+                {{ getStatusText(user.status) }}
+              </span>
+              <span v-if="user.id === currentUserID" class="you-label">(我)</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -30,7 +44,13 @@
             返回群聊
           </el-button>
         </h2>
-        <el-button @click="logout" type="danger" size="small">退出</el-button>
+        <div class="header-actions">
+          <el-button @click="goToProfile" type="primary" size="small">
+            <el-icon><User /></el-icon>
+            个人资料
+          </el-button>
+          <el-button @click="logout" type="danger" size="small">退出</el-button>
+        </div>
       </div>
       
       <div class="chat-box" ref="chatBox" @scroll="handleScroll">
@@ -129,7 +149,7 @@
 import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Loading, Upload, Document } from '@element-plus/icons-vue'
+import { Loading, Upload, Document, User } from '@element-plus/icons-vue'
 import request from '../utils/request'
 
 const router = useRouter()
@@ -144,6 +164,7 @@ const privateTarget = ref(0) // 0表示群聊，>0表示私聊目标用户ID
 const privateTargetName = ref('')
 const currentUserID = ref(0)
 const onlineUsersRefreshInterval = ref(null)
+const defaultAvatar = 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png'
 
 // 添加分页相关状态变量
 const currentPage = ref(1)
@@ -158,6 +179,24 @@ const getFullFileUrl = (fileUrl) => {
   if (!fileUrl) return ''
   if (fileUrl.startsWith('http')) return fileUrl
   return `http://localhost:8080${fileUrl}`
+}
+
+// 获取完整头像URL
+const getFullAvatarUrl = (avatar) => {
+  if (!avatar) return defaultAvatar
+  if (avatar.startsWith('http')) return avatar
+  return `http://localhost:8080${avatar}`
+}
+
+// 获取状态文本
+const getStatusText = (status) => {
+  const statusMap = {
+    'online': '在线',
+    'busy': '忙碌',
+    'away': '离开',
+    'offline': '离线'
+  }
+  return statusMap[status] || '未知'
 }
 
 // 获取历史消息
@@ -474,6 +513,11 @@ const scrollToBottom = () => {
   })
 }
 
+// 跳转到个人资料页面
+const goToProfile = () => {
+  router.push('/profile')
+}
+
 // 退出登录
 const logout = () => {
   localStorage.removeItem('token')
@@ -548,10 +592,11 @@ onUnmounted(() => {
 .user-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 12px;
+  border-radius: 8px;
   cursor: pointer;
   transition: background-color 0.2s;
+  margin-bottom: 8px;
 }
 
 .user-item:hover {
@@ -568,18 +613,99 @@ onUnmounted(() => {
   cursor: default;
 }
 
-.user-status {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+.user-avatar {
+  position: relative;
+  margin-right: 12px;
+}
+
+.user-avatar img {
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background-color: #4caf50;
-  margin-right: 8px;
+  object-fit: cover;
+}
+
+.user-status {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+}
+
+.user-status.online {
+  background-color: #52c41a;
+}
+
+.user-status.busy {
+  background-color: #ff4d4f;
+}
+
+.user-status.away {
+  background-color: #faad14;
+}
+
+.user-status.offline {
+  background-color: #d9d9d9;
+}
+
+.user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.user-name {
+  font-weight: bold;
+  color: #333;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-bio {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-status-text {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.status-text {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  color: #fff;
+}
+
+.status-text.online {
+  background-color: #52c41a;
+}
+
+.status-text.busy {
+  background-color: #ff4d4f;
+}
+
+.status-text.away {
+  background-color: #faad14;
+}
+
+.status-text.offline {
+  background-color: #d9d9d9;
+  color: #666;
 }
 
 .you-label {
-  margin-left: auto;
-  font-size: 12px;
+  font-size: 11px;
   color: #999;
 }
 
@@ -597,6 +723,11 @@ onUnmounted(() => {
   margin-bottom: 20px;
   padding-bottom: 10px;
   border-bottom: 1px solid #ddd;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
 }
 
 .chat-box {

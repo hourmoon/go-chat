@@ -41,6 +41,23 @@ func main() {
 	r.POST("/upload", middleware.JWTAuthMiddleware(), routes.UploadFile)
 	r.GET("/uploads/:filename", routes.ServeFile)
 
+	// 添加新的路由
+	// 用户资料路由
+	r.GET("/profile", middleware.JWTAuthMiddleware(), routes.GetProfile)
+	r.PUT("/profile", middleware.JWTAuthMiddleware(), routes.UpdateProfile)
+	r.POST("/profile/avatar", middleware.JWTAuthMiddleware(), routes.UploadAvatar)
+	r.PUT("/profile/status", middleware.JWTAuthMiddleware(), routes.UpdateUserStatus)
+
+	// 好友系统路由
+	r.GET("/friends", middleware.JWTAuthMiddleware(), routes.GetFriends)
+	r.GET("/friends/pending", middleware.JWTAuthMiddleware(), routes.GetPendingFriendRequests)
+	r.POST("/friends", middleware.JWTAuthMiddleware(), routes.AddFriend)
+	r.POST("/friends/:id/action", middleware.JWTAuthMiddleware(), routes.HandleFriendRequest)
+	r.DELETE("/friends/:id", middleware.JWTAuthMiddleware(), routes.RemoveFriend)
+
+	// 静态文件服务（添加头像目录）
+	r.Static("/uploads/avatars", "./uploads/avatars")
+
 	log.Println("服务器启动在 :8080")
 	if err := r.Run(":8080"); err != nil {
 		log.Fatal("服务器启动失败:", err)

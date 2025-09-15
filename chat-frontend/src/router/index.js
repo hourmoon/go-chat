@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/login.vue'
 import Chat from '../views/Chat.vue'
+import Profile from '../views/Profile.vue'
 
 const routes = [
   { path: '/', name: 'Login', component: Login },
@@ -9,6 +10,12 @@ const routes = [
     name: 'Chat',
     component: Chat,
     meta: { requiresAuth: true } // ✅ 标记这个路由需要登录
+  },
+  {
+    path: '/profile',
+    name: 'Profile',
+    component: Profile,
+    meta: { requiresAuth: true }
   }
 ]
 

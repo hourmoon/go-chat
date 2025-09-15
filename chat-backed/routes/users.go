@@ -17,6 +17,9 @@ func GetOnlineUsers(c *gin.Context) {
 		userList[i] = map[string]interface{}{
 			"id":       user.UserID,
 			"username": user.Username,
+			"avatar":   user.Avatar,
+			"bio":      user.Bio,
+			"status":   user.Status,
 		}
 	}
 
