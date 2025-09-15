@@ -18,8 +18,14 @@ const (
 )
 
 // 初始化上传目录
+// init 函数在程序启动时自动执行，用于进行初始化操作
 func init() {
+	// 检查上传路径是否存在，如果不存在则创建
+	// os.Stat 函数用于获取文件或目录的信息
+	// 如果返回的错误类型为 os.IsNotExist，则表示目录不存在
 	if _, err := os.Stat(uploadPath); os.IsNotExist(err) {
+		// 使用 MkdirAll 创建目录，包括所有必要的父目录
+		// os.ModePerm 表示设置权限为 0777，即所有用户都有读、写、执行权限
 		os.MkdirAll(uploadPath, os.ModePerm)
 	}
 }
