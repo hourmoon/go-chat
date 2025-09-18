@@ -58,6 +58,9 @@ func main() {
 	// 静态文件服务（添加头像目录）
 	r.Static("/uploads/avatars", "./uploads/avatars")
 
+	// 注册群组路由
+	routes.GroupsRoutes(r)
+
 	log.Println("服务器启动在 :8080")
 	if err := r.Run(":8080"); err != nil {
 		log.Fatal("服务器启动失败:", err)

@@ -14,6 +14,7 @@ type Message struct {
 	FileURL     string    `json:"file_url"`                           // 文件URL
 	FileName    string    `json:"file_name"`                          // 文件名
 	FileSize    int64     `json:"file_size"`                          // 文件大小
+	GroupID     uint      `json:"group_id" gorm:"index"`              // 群组ID，0表示私聊或全局聊天
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -31,5 +32,9 @@ func CreateMessageIndexes() {
 	DB.Exec("CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)")
 	// 添加ID索引，用于游标分页
 	DB.Exec("CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(id)")
+	// 为群组ID字段创建索引，提高按群组查询的性能
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_messages_group_id ON messages(group_id)")
+	// 创建复合索引，提高按群组和时间查询的性能
+	DB.Exec("CREATE INDEX IF NOT EXISTS idx_messages_group_created ON messages(group_id, created_at)")
 	fmt.Println("✅ 消息表索引创建完成")
 }
