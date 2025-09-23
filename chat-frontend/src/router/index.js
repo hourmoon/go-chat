@@ -2,6 +2,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../views/login.vue'
 import Chat from '../views/Chat.vue'
 import Profile from '../views/Profile.vue'
+import Groups from '../views/Groups.vue'
+import GroupChat from '../views/GroupChat.vue'
+import { ElMessage } from 'element-plus'
 
 const routes = [
   { path: '/', name: 'Login', component: Login },
@@ -15,6 +18,18 @@ const routes = [
     path: '/profile',
     name: 'Profile',
     component: Profile,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/groups',
+    name: 'Groups',
+    component: Groups,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/group/:groupId',
+    name: 'GroupChat',
+    component: GroupChat,
     meta: { requiresAuth: true }
   }
 ]

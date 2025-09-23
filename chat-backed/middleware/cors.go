@@ -9,32 +9,31 @@ import (
 )
 
 func CORSMiddleware() gin.HandlerFunc {
+	allowedOrigins := map[string]struct{}{
+		"http://localhost:5173": {},
+		"http://127.0.0.1:5173": {},
+	}
+
 	return func(c *gin.Context) {
-		// 允许前端应用的地址
 		origin := c.Request.Header.Get("Origin")
-		allowedOrigins := []string{"http://localhost:5173", "http://localhost:3000"}
 
-		// 检查请求来源是否在允许的列表中
-		for _, allowedOrigin := range allowedOrigins {
-			if origin == allowedOrigin {
-				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
-				break
-			}
-		}
-
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Accept, Origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
-
-		// 特别处理 WebSocket 升级请求
-		if c.Request.Header.Get("Connection") == "Upgrade" &&
-			c.Request.Header.Get("Upgrade") == "websocket" {
+		if _, ok := allowedOrigins[origin]; ok {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		} else {
+			// 对非白名单来源，不返回 credentials，且不要回 "*"
+			if origin != "" {
+				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			}
+			// 不设置或显式 false 都可：
+			// c.Writer.Header().Set("Access-Control-Allow-Credentials", "false")
 		}
 
-		// 处理预检请求
-		if c.Request.Method == "OPTIONS" {
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Accept, Origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+
+		// 预检请求直接返回
+		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}

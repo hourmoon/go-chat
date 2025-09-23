@@ -32,7 +32,8 @@ type BroadcastMessage struct {
 	FileURL     string `json:"file_url"`
 	FileName    string `json:"file_name"`
 	FileSize    int64  `json:"file_size"`
-	Target      uint   `json:"target"` // 0表示群聊，>0表示私聊目标用户ID
+	Target      uint   `json:"target"`   // 0表示全局/群聊，>0表示私聊目标用户ID
+	GroupID     uint   `json:"group_id"` // 群组ID，0表示全局聊天，>0表示群聊
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -172,6 +173,11 @@ func WSHandler(c *gin.Context) {
 			target = uint(targetVal)
 		}
 
+		groupID := uint(0)
+		if groupVal, ok := messageData["group_id"].(float64); ok {
+			groupID = uint(groupVal)
+		}
+
 		// 创建消息实例并保存到数据库
 		message := models.Message{
 			UserID:      userID,
@@ -181,6 +187,7 @@ func WSHandler(c *gin.Context) {
 			FileURL:     fileURL,
 			FileName:    fileName,
 			FileSize:    fileSize,
+			GroupID:     groupID,
 			CreatedAt:   time.Now(),
 		}
 
@@ -201,6 +208,7 @@ func WSHandler(c *gin.Context) {
 			FileName:    fileName,
 			FileSize:    fileSize,
 			Target:      target,
+			GroupID:     groupID,
 			CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
 		}
 		// 给广播通道发送消息
@@ -221,14 +229,15 @@ func HandleMessages() {
 				sendMessageToClient(client, msg)
 			}
 			mutex.RUnlock()
-		} else if msg.Target == 0 {
-			// 群聊消息，发送给所有用户
-			mutex.RLock()
-			for client := range clients {
-				sendMessageToClient(client, msg)
+		} else if msg.Type == "group_member_joined" || msg.Type == "group_member_left" {
+			// 群成员变动消息，仅广播给该群在线成员
+			if msg.GroupID > 0 {
+				broadcastToGroupMembers(msg, msg.GroupID)
 			}
-			mutex.RUnlock()
-		} else {
+		} else if msg.GroupID > 0 {
+			// 群聊消息，仅广播给该群在线成员
+			broadcastToGroupMembers(msg, msg.GroupID)
+		} else if msg.Target > 0 {
 			// 私聊消息，只发送给目标用户和发送者
 			utils.OnlineUsers.RLock()
 			// 发送给目标用户
@@ -240,6 +249,13 @@ func HandleMessages() {
 				sendMessageToClient(sender.Conn, msg)
 			}
 			utils.OnlineUsers.RUnlock()
+		} else {
+			// 全局群聊消息，发送给所有用户
+			mutex.RLock()
+			for client := range clients {
+				sendMessageToClient(client, msg)
+			}
+			mutex.RUnlock()
 		}
 	}
 }
@@ -260,4 +276,28 @@ func sendMessageToClient(client *websocket.Conn, msg BroadcastMessage) {
 		delete(clients, client)
 		mutex.Unlock()
 	}
+}
+
+// 辅助函数：向群成员广播消息
+func broadcastToGroupMembers(msg BroadcastMessage, groupID uint) {
+	// 查询群成员ID列表
+	var memberIDs []uint
+	if err := models.DB.Model(&models.GroupMember{}).Where("group_id = ?", groupID).Pluck("user_id", &memberIDs).Error; err != nil {
+		fmt.Printf("查询群成员失败: %v\n", err)
+		return
+	}
+
+	// 发送给在线的群成员
+	utils.OnlineUsers.RLock()
+	for _, memberID := range memberIDs {
+		if user, exists := utils.OnlineUsers.Users[memberID]; exists {
+			sendMessageToClient(user.Conn, msg)
+		}
+	}
+	utils.OnlineUsers.RUnlock()
+}
+
+// SendBroadcastMessage 向广播通道发送消息
+func SendBroadcastMessage(msg BroadcastMessage) {
+	broadcast <- msg
 }

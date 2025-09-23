@@ -1,53 +1,72 @@
 <template>
-  <div class="chat-container">
-    <!-- 在线用户侧边栏 -->
-    <div class="online-users-sidebar">
-      <h3>在线用户 ({{ onlineUsers.length }})</h3>
-      <div class="user-list">
-        <div 
-          v-for="user in onlineUsers" 
-          :key="user.id"
-          class="user-item"
-          :class="{ 
-            active: privateTarget === user.id,
-            'current-user': user.id === currentUserID
-          }"
-          @click="startPrivateChat(user)"
-        >
-          <div class="user-avatar">
-            <img 
-              :src="user.avatar ? getFullAvatarUrl(user.avatar) : defaultAvatar" 
-              :alt="user.username"
-            />
-            <span :class="['user-status', user.status]"></span>
-          </div>
-          <div class="user-info">
-            <div class="user-name">{{ user.username }}</div>
-            <div class="user-bio" v-if="user.bio">{{ user.bio }}</div>
-            <div class="user-status-text">
-              <span :class="['status-text', user.status]">
-                {{ getStatusText(user.status) }}
-              </span>
-              <span v-if="user.id === currentUserID" class="you-label">(我)</span>
-            </div>
-          </div>
+  <div class="group-chat-container">
+    <!-- 群成员侧边栏 -->
+    <div class="group-members-sidebar">
+      <div class="group-header">
+        <h3>{{ currentGroup?.Name || '群聊' }}</h3>
+        <div class="group-actions">
+          <el-button @click="goToGroups" size="small" type="primary">
+            <el-icon><Back /></el-icon>
+            返回群组列表
+          </el-button>
         </div>
+      </div>
+      
+      <div class="group-members">
+        <el-tabs v-model="activeTab" class="member-tabs">
+          <el-tab-pane label="在线成员" name="online">
+            <div class="online-members">
+              <h4>在线成员 ({{ onlineMembers.length }})</h4>
+              <div class="member-list">
+                <div 
+                  v-for="member in onlineMembers" 
+                  :key="member.id"
+                  class="member-item"
+                  :class="{ 'current-user': member.id === currentUserID }"
+                >
+                  <div class="member-avatar">
+                    <img 
+                      :src="member.avatar ? getFullAvatarUrl(member.avatar) : defaultAvatar" 
+                      :alt="member.username"
+                    />
+                    <span class="member-status online"></span>
+                  </div>
+                  <div class="member-info">
+                    <div class="member-name">{{ member.username }}</div>
+                    <div class="member-status-text">在线</div>
+                    <span v-if="member.id === currentUserID" class="you-label">(我)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </el-tab-pane>
+          
+          <el-tab-pane label="成员管理" name="manage">
+            <GroupMemberList
+              :group-id="currentGroupId"
+              :current-user-role="currentUserRole"
+              :online-members="onlineMembers"
+              @member-added="handleMemberAdded"
+              @member-removed="handleMemberRemoved"
+              @refresh-members="refreshOnlineMembers"
+            />
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </div>
     
-    <!-- 主聊天区域 -->
+    <!-- 主群聊区域 -->
     <div class="main-chat-area">
       <div class="chat-header">
         <h2>
-          {{ privateTarget ? `与 ${privateTargetName} 的私聊` : '群聊' }}
-          <el-button v-if="privateTarget" @click="exitPrivateChat" size="small" type="info">
-            返回群聊
-          </el-button>
+          <el-icon><ChatRound /></el-icon>
+          {{ currentGroup?.Name || '群聊' }}
+          <span class="group-label">群聊</span>
         </h2>
         <div class="header-actions">
-          <el-button @click="goToGroups" type="info" size="small">
-            <el-icon><ChatRound /></el-icon>
-            群组
+          <el-button @click="refreshOnlineMembers" size="small">
+            <el-icon><Refresh /></el-icon>
+            刷新成员
           </el-button>
           <el-button @click="goToProfile" type="primary" size="small">
             <el-icon><User /></el-icon>
@@ -77,8 +96,8 @@
           class="message" 
           :class="{ 
             'own-message': msg.isOwn, 
-            'private-message': msg.isPrivate,
-            'system-message': msg.isSystem
+            'system-message': msg.isSystem,
+            'group-message': true
           }"
         >
           <div class="message-meta">
@@ -105,15 +124,13 @@
               <div class="file-size">{{ formatFileSize(msg.fileSize) }}</div>
             </div>
           </div>
-          
-          <div v-if="msg.isPrivate" class="private-label">私聊</div>
         </div>
       </div>
       
       <div class="chat-input">
         <el-input
           v-model="message"
-          :placeholder="privateTarget ? `发送给 ${privateTargetName}...` : '输入消息并按回车发送...'"
+          placeholder="输入群聊消息并按回车发送..."
           @keyup.enter="sendMessage"
           :disabled="!isConnected"
         >
@@ -150,30 +167,40 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Loading, Upload, Document, User, ChatRound } from '@element-plus/icons-vue'
+import { Loading, Upload, Document, User, ChatRound, Back, Refresh } from '@element-plus/icons-vue'
 import request from '../utils/request'
+import groupStore from '../stores/groupStore'
+import * as groupApi from '../utils/groupApi'
+import GroupMemberList from '../components/GroupMemberList.vue'
 
 const router = useRouter()
+const route = useRoute()
 const message = ref('')
 const messages = ref([])
 const socket = ref(null)
 const isConnected = ref(false)
 const chatBox = ref(null)
 const loadingHistory = ref(false)
-const onlineUsers = ref([])
-const privateTarget = ref(0) // 0表示群聊，>0表示私聊目标用户ID
-const privateTargetName = ref('')
+const onlineMembers = ref([])
 const currentUserID = ref(0)
-const onlineUsersRefreshInterval = ref(null)
+const currentGroupId = ref(null)
+const activeTab = ref('online')
+const currentUserRole = ref('member')
 const defaultAvatar = 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png'
 
 // 添加分页相关状态变量
 const currentPage = ref(1)
 const hasMoreMessages = ref(true)
 const isLoadingMore = ref(false)
+
+// 从路由参数获取群组ID
+currentGroupId.value = parseInt(route.params.groupId)
+
+// 从groupStore获取当前群组信息
+const currentGroup = computed(() => groupStore.state.currentGroup)
 
 // 从 localStorage 获取用户名
 const username = computed(() => localStorage.getItem('username') || '未知用户')
@@ -192,19 +219,10 @@ const getFullAvatarUrl = (avatar) => {
   return `http://localhost:8080${avatar}`
 }
 
-// 获取状态文本
-const getStatusText = (status) => {
-  const statusMap = {
-    'online': '在线',
-    'busy': '忙碌',
-    'away': '离开',
-    'offline': '离线'
-  }
-  return statusMap[status] || '未知'
-}
-
-// 获取历史消息
+// 获取群聊历史消息
 const fetchHistoryMessages = async (loadMore = false) => {
+  if (!currentGroupId.value) return
+  
   if (loadMore) {
     isLoadingMore.value = true
     currentPage.value += 1
@@ -215,7 +233,7 @@ const fetchHistoryMessages = async (loadMore = false) => {
   }
   
   try {
-    const response = await request.get(`/messages?page=${currentPage.value}&pageSize=50`)
+    const response = await groupApi.getGroupMessages(currentGroupId.value, currentPage.value, 50)
     
     const newMessages = response.messages.map(msg => ({
       id: msg.id,
@@ -229,7 +247,8 @@ const fetchHistoryMessages = async (loadMore = false) => {
       messageType: msg.message_type || 'text',
       fileUrl: msg.file_url,
       fileName: msg.file_name,
-      fileSize: msg.file_size
+      fileSize: msg.file_size,
+      groupId: msg.group_id
     }))
     
     if (loadMore) {
@@ -243,8 +262,8 @@ const fetchHistoryMessages = async (loadMore = false) => {
     // 检查是否还有更多消息
     hasMoreMessages.value = currentPage.value < response.pagination.totalPages
   } catch (error) {
-    console.error('获取历史消息失败:', error)
-    ElMessage.error('获取历史消息失败')
+    console.error('获取群聊历史消息失败:', error)
+    ElMessage.error('获取群聊历史消息失败')
   } finally {
     loadingHistory.value = false
     isLoadingMore.value = false
@@ -261,18 +280,23 @@ const handleScroll = () => {
   }
 }
 
-// 获取在线用户列表
-const fetchOnlineUsers = async () => {
+// 获取群在线成员列表
+const fetchOnlineMembers = async () => {
+  if (!currentGroupId.value) return
+  
   try {
-    const response = await request.get('/online-users')
-    if (response.success) {
-      onlineUsers.value = response.data
-    } else {
-      onlineUsers.value = response
-    }
+    const response = await groupApi.getOnlineMembers(currentGroupId.value)
+    onlineMembers.value = response.onlineMembers || []
   } catch (error) {
-    console.error('获取在线用户失败:', error)
+    console.error('获取群在线成员失败:', error)
+    ElMessage.error('获取群在线成员失败')
   }
+}
+
+// 刷新在线成员
+const refreshOnlineMembers = () => {
+  fetchOnlineMembers()
+  ElMessage.success('已刷新在线成员列表')
 }
 
 // 文件上传前的验证
@@ -326,7 +350,7 @@ const sendFileMessage = (fileUrl, fileName, fileSize) => {
       fileUrl: fileUrl,
       fileName: fileName,
       fileSize: fileSize,
-      target: privateTarget.value
+      group_id: currentGroupId.value
     }
     
     socket.value.send(JSON.stringify(messageData))
@@ -343,22 +367,6 @@ const formatFileSize = (bytes) => {
   const sizes = ['Bytes', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-// 开始私聊
-const startPrivateChat = (user) => {
-  if (user.id === currentUserID.value) return // 不能和自己私聊
-  
-  privateTarget.value = user.id
-  privateTargetName.value = user.username
-  ElMessage.info(`开始与 ${user.username} 私聊`)
-}
-
-// 退出私聊
-const exitPrivateChat = () => {
-  privateTarget.value = 0
-  privateTargetName.value = ''
-  ElMessage.info('已返回群聊')
 }
 
 // 格式化存储时间
@@ -414,51 +422,57 @@ const initWebSocket = () => {
         // 尝试解析 JSON 消息
         const messageData = JSON.parse(event.data)
         
-        // 处理用户上下线消息
-        if (messageData.type === 'user_joined' || messageData.type === 'user_left') {
-          fetchOnlineUsers() // 刷新在线用户列表
-          // 显示系统消息
-          const newMessage = {
-            content: messageData.content,
-            sender: '系统',
-            timestamp: new Date(),
-            time: formatTime(new Date()),
-            isOwn: false,
-            isPrivate: false,
-            isSystem: true
+        // 处理群成员变动消息
+        if (messageData.type === 'group_member_joined' || messageData.type === 'group_member_left') {
+          // 只处理当前群组的成员变动
+          if (messageData.group_id === currentGroupId.value) {
+            fetchOnlineMembers() // 刷新在线成员列表
+            // 显示系统消息
+            const newMessage = {
+              content: messageData.content,
+              sender: '系统',
+              timestamp: new Date(),
+              time: formatTime(new Date()),
+              isOwn: false,
+              isPrivate: false,
+              isSystem: true
+            }
+            messages.value.push(newMessage)
+            scrollToBottom()
           }
-          messages.value.push(newMessage)
-          scrollToBottom()
+          return
+        }
+        
+        // 处理用户上下线消息（全局事件）
+        if (messageData.type === 'user_joined' || messageData.type === 'user_left') {
+          fetchOnlineMembers() // 刷新在线成员列表
           return
         }
         
         // 处理普通消息
         if (messageData.type === 'message') {
-          // 忽略群组消息（group_id > 0），只处理全局聊天和私聊消息
-          if (messageData.group_id && messageData.group_id > 0) {
-            return // 群组消息由GroupChat.vue处理
-          }
-          
-          const newMessage = {
-            content: messageData.content,
-            sender: messageData.username,
-            timestamp: new Date(messageData.created_at || new Date()),
-            time: formatTime(new Date(messageData.created_at || new Date())),
-            isOwn: messageData.user_id === currentUserID.value,
-            isPrivate: messageData.target > 0 && messageData.target !== currentUserID.value,
-            isSystem: false,
-            messageType: messageData.message_type || 'text',
-            fileUrl: messageData.file_url,
-            fileName: messageData.file_name,
-            fileSize: messageData.file_size
-          }
-          
-          // 如果是私聊消息，只有相关用户能看到
-          if (!messageData.target || 
-              messageData.target === currentUserID.value || 
-              messageData.user_id === currentUserID.value) {
+          // 只显示当前群组的消息
+          if (messageData.group_id === currentGroupId.value) {
+            const newMessage = {
+              content: messageData.content,
+              sender: messageData.username,
+              timestamp: new Date(messageData.created_at || new Date()),
+              time: formatTime(new Date(messageData.created_at || new Date())),
+              isOwn: messageData.user_id === currentUserID.value,
+              isPrivate: false,
+              isSystem: false,
+              messageType: messageData.message_type || 'text',
+              fileUrl: messageData.file_url,
+              fileName: messageData.file_name,
+              fileSize: messageData.file_size,
+              groupId: messageData.group_id
+            }
+            
             messages.value.push(newMessage)
             scrollToBottom()
+          } else if (messageData.group_id && messageData.group_id !== currentGroupId.value) {
+            // 将其他群组的消息添加到groupStore中
+            groupStore.actions.addMessageToGroup(messageData.group_id, messageData)
           }
         }
       } catch (error) {
@@ -503,7 +517,7 @@ const sendMessage = () => {
     const messageData = {
       type: 'message',
       content: message.value,
-      target: privateTarget.value // 添加目标字段
+      group_id: currentGroupId.value
     }
     
     socket.value.send(JSON.stringify(messageData))
@@ -522,7 +536,7 @@ const scrollToBottom = () => {
   })
 }
 
-// 跳转到群组页面
+// 跳转到群组列表
 const goToGroups = () => {
   router.push('/groups')
 }
@@ -542,16 +556,48 @@ const logout = () => {
   router.push('/')
 }
 
+// 监听路由变化
+watch(() => route.params.groupId, (newGroupId) => {
+  if (newGroupId) {
+    currentGroupId.value = parseInt(newGroupId)
+    // 重新加载群组信息和消息
+    groupStore.actions.selectGroup(currentGroupId.value)
+    fetchHistoryMessages()
+    fetchOnlineMembers()
+  }
+})
+
+// 处理成员添加事件
+const handleMemberAdded = () => {
+  ElMessage.success('成员添加成功')
+  fetchOnlineMembers()
+}
+
+// 处理成员移除事件
+const handleMemberRemoved = () => {
+  ElMessage.success('成员移除成功')
+  fetchOnlineMembers()
+}
+
+// 获取当前用户在群组中的角色
+const fetchCurrentUserRole = async () => {
+  try {
+    const response = await groupApi.getGroupMembers(currentGroupId.value)
+    const currentMember = response.members.find(member => member.UserID === currentUserID.value)
+    if (currentMember) {
+      currentUserRole.value = currentMember.Role
+    }
+  } catch (error) {
+    console.error('获取用户角色失败:', error)
+  }
+}
+
 // 生命周期钩子
-onMounted(() => {
-  fetchHistoryMessages()
-  initWebSocket()
-  
-  // 从token中解析用户ID（这里需要根据你的JWT结构进行调整）
+onMounted(async () => {
+  // 从token中解析用户ID
   const token = localStorage.getItem('token')
   if (token) {
     try {
-      // 简单解析JWT获取用户ID（实际应用中应该使用更安全的方式）
       const payload = JSON.parse(atob(token.split('.')[1]))
       currentUserID.value = payload.userID || 0
     } catch (error) {
@@ -559,31 +605,35 @@ onMounted(() => {
     }
   }
   
-  // 定期刷新在线用户列表
-  onlineUsersRefreshInterval.value = setInterval(fetchOnlineUsers, 5000)
-})
-
-onUnmounted(() => {
-  if (onlineUsersRefreshInterval.value) {
-    clearInterval(onlineUsersRefreshInterval.value)
-  }
-  if (socket.value) {
-    socket.value.close()
-  }
-  if (chatBox.value) {
-    chatBox.value.removeEventListener('scroll', handleScroll)
-  }
+  // 初始化群组状态
+  await groupStore.actions.selectGroup(currentGroupId.value)
+  
+  // 加载数据
+  fetchHistoryMessages()
+  fetchOnlineMembers()
+  fetchCurrentUserRole()
+  initWebSocket()
+  
+  // 定期刷新在线成员列表
+  const refreshInterval = setInterval(fetchOnlineMembers, 10000)
+  
+  onUnmounted(() => {
+    clearInterval(refreshInterval)
+    if (socket.value) {
+      socket.value.close()
+    }
+  })
 })
 </script>
 
 <style scoped>
-.chat-container {
+.group-chat-container {
   display: flex;
   height: 100vh;
   background-color: #f5f5f5;
 }
 
-.online-users-sidebar {
+.group-members-sidebar {
   width: 250px;
   background-color: white;
   border-right: 1px solid #e0e0e0;
@@ -591,55 +641,77 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-.online-users-sidebar h3 {
-  margin-top: 0;
-  margin-bottom: 15px;
-  color: #333;
+.group-header {
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #eee;
 }
 
-.user-list {
+.group-header h3 {
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 18px;
+}
+
+.group-actions {
+  margin-top: 10px;
+}
+
+.group-members h4 {
+  margin: 0 0 15px 0;
+  color: #666;
+  font-size: 14px;
+}
+
+.member-tabs {
+  height: 100%;
+}
+
+.member-tabs .el-tabs__content {
+  height: calc(100% - 40px);
+  overflow-y: auto;
+}
+
+.online-members {
+  padding: 8px 0;
+}
+
+.member-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.user-item {
+.member-item {
   display: flex;
   align-items: center;
   padding: 12px;
   border-radius: 8px;
-  cursor: pointer;
   transition: background-color 0.2s;
   margin-bottom: 8px;
 }
 
-.user-item:hover {
+.member-item:hover {
   background-color: #f0f0f0;
 }
 
-.user-item.active {
-  background-color: #e3f2fd;
-  font-weight: bold;
-}
-
-.user-item.current-user {
+.member-item.current-user {
   background-color: #f5f5f5;
-  cursor: default;
 }
 
-.user-avatar {
+.member-avatar {
   position: relative;
   margin-right: 12px;
 }
 
-.user-avatar img {
+.member-avatar img {
   width: 40px;
   height: 40px;
   border-radius: 50%;
   object-fit: cover;
 }
 
-.user-status {
+.member-status {
   position: absolute;
   bottom: 2px;
   right: 2px;
@@ -649,28 +721,16 @@ onUnmounted(() => {
   border: 2px solid #fff;
 }
 
-.user-status.online {
+.member-status.online {
   background-color: #52c41a;
 }
 
-.user-status.busy {
-  background-color: #ff4d4f;
-}
-
-.user-status.away {
-  background-color: #faad14;
-}
-
-.user-status.offline {
-  background-color: #d9d9d9;
-}
-
-.user-info {
+.member-info {
   flex: 1;
   min-width: 0;
 }
 
-.user-name {
+.member-name {
   font-weight: bold;
   color: #333;
   margin-bottom: 2px;
@@ -679,43 +739,10 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-.user-bio {
+.member-status-text {
   font-size: 11px;
-  color: #666;
+  color: #52c41a;
   margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.user-status-text {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.status-text {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  color: #fff;
-}
-
-.status-text.online {
-  background-color: #52c41a;
-}
-
-.status-text.busy {
-  background-color: #ff4d4f;
-}
-
-.status-text.away {
-  background-color: #faad14;
-}
-
-.status-text.offline {
-  background-color: #d9d9d9;
-  color: #666;
 }
 
 .you-label {
@@ -737,6 +764,23 @@ onUnmounted(() => {
   margin-bottom: 20px;
   padding-bottom: 10px;
   border-bottom: 1px solid #ddd;
+}
+
+.chat-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #333;
+}
+
+.group-label {
+  background: linear-gradient(45deg, #1890ff, #52c41a);
+  color: white;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-weight: normal;
 }
 
 .header-actions {
@@ -789,8 +833,8 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-.private-message {
-  border: 2px solid #ffa500;
+.group-message {
+  border-left: 4px solid #52c41a;
 }
 
 .system-message {
@@ -879,17 +923,6 @@ onUnmounted(() => {
 .file-size {
   font-size: 12px;
   color: #666;
-}
-
-.private-label {
-  position: absolute;
-  top: -8px;
-  right: 10px;
-  background-color: #ffa500;
-  color: white;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 10px;
 }
 
 .chat-input {
