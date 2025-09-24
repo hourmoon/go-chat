@@ -217,7 +217,10 @@ const fetchHistoryMessages = async (loadMore = false) => {
   try {
     const response = await request.get(`/messages?page=${currentPage.value}&pageSize=50`)
     
-    const newMessages = response.messages.map(msg => ({
+    // 过滤出仅全局聊天消息（防串流兜底）
+    const filteredMessages = response.messages.filter(msg => !msg.group_id || msg.group_id === 0)
+    
+    const newMessages = filteredMessages.map(msg => ({
       id: msg.id,
       content: msg.content,
       sender: msg.username,

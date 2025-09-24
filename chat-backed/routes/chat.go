@@ -178,6 +178,23 @@ func WSHandler(c *gin.Context) {
 			groupID = uint(groupVal)
 		}
 
+		// 对于群聊消息，验证发送者是否为群成员
+		if groupID > 0 {
+			var member models.GroupMember
+			if err := models.DB.Where("user_id = ? AND group_id = ?", userID, groupID).First(&member).Error; err != nil {
+				// 发送者不是群成员，向其发送错误消息并跳过处理
+				errorMsg := map[string]interface{}{
+					"type":    "error",
+					"message": "您不是该群组成员，无法发送消息",
+				}
+				if errorJSON, err := json.Marshal(errorMsg); err == nil {
+					conn.WriteMessage(websocket.TextMessage, errorJSON)
+				}
+				fmt.Printf("❌ 用户 %s 尝试向群组 %d 发送消息但不是成员\n", username, groupID)
+				continue // 跳过此消息的处理
+			}
+		}
+
 		// 创建消息实例并保存到数据库
 		message := models.Message{
 			UserID:      userID,

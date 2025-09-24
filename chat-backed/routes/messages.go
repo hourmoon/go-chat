@@ -35,14 +35,14 @@ func GetMessages(c *gin.Context) {
 	var messages []models.Message
 	var total int64
 
-	// 获取总消息数
-	if err := models.DB.Model(&models.Message{}).Count(&total).Error; err != nil {
+	// 获取总消息数（仅全局聊天消息，group_id = 0）
+	if err := models.DB.Model(&models.Message{}).Where("group_id = 0").Count(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息总数失败"})
 		return
 	}
 
-	// 按创建时间降序获取消息
-	if err := models.DB.Order("created_at desc").Offset(offset).Limit(pageSize).Find(&messages).Error; err != nil {
+	// 按创建时间降序获取消息（仅全局聊天消息，group_id = 0）
+	if err := models.DB.Where("group_id = 0").Order("created_at desc").Offset(offset).Limit(pageSize).Find(&messages).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败"})
 		return
 	}
