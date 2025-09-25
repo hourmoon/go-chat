@@ -55,6 +55,9 @@ func main() {
 	r.POST("/friends/:id/action", middleware.JWTAuthMiddleware(), routes.HandleFriendRequest)
 	r.DELETE("/friends/:id", middleware.JWTAuthMiddleware(), routes.RemoveFriend)
 
+	// 用户搜索（按用户名模糊查询）
+	r.GET("/users/search", middleware.JWTAuthMiddleware(), routes.SearchUsers)
+
 	// 静态文件服务（添加头像目录）
 	r.Static("/uploads/avatars", "./uploads/avatars")
 

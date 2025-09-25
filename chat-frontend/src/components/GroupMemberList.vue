@@ -93,12 +93,30 @@
       width="400px"
     >
       <el-form :model="inviteForm" label-width="80px">
-        <el-form-item label="用户ID">
-          <el-input
+        <el-form-item label="用户名">
+          <el-select
             v-model="inviteForm.userId"
-            placeholder="请输入要邀请的用户ID"
-            type="number"
-          />
+            filterable
+            remote
+            reserve-keyword
+            placeholder="搜索用户名..."
+            :remote-method="searchUserByName"
+            :loading="searchLoading"
+            style="width: 100%"
+            no-data-text="未找到用户"
+          >
+            <el-option
+              v-for="u in searchResults"
+              :key="u.id"
+              :label="u.username"
+              :value="u.id"
+            >
+              <div style="display:flex;align-items:center;gap:8px;">
+                <img :src="getFullAvatarUrl(u.avatar)" alt="avatar" style="width:20px;height:20px;border-radius:50%;object-fit:cover;" />
+                <span>{{ u.username }}</span>
+              </div>
+            </el-option>
+          </el-select>
         </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="inviteForm.role" placeholder="选择角色">
@@ -150,6 +168,8 @@ const emit = defineEmits(['memberAdded', 'memberRemoved', 'refreshMembers'])
 const members = ref([])
 const showInviteDialog = ref(false)
 const inviting = ref(false)
+const searchLoading = ref(false)
+const searchResults = ref([])
 const inviteForm = ref({
   userId: '',
   role: 'member'
@@ -162,6 +182,39 @@ const getFullAvatarUrl = (avatar) => {
   if (!avatar) return defaultAvatar
   if (avatar.startsWith('http')) return avatar
   return `http://localhost:8080${avatar}`
+}
+
+// 防抖定时器
+let searchTimer = null
+
+// 远程搜索用户名（带防抖）
+const searchUserByName = (query) => {
+  const kw = (query || '').trim()
+  if (!kw) {
+    searchResults.value = []
+    return
+  }
+  
+  // 清除之前的定时器
+  if (searchTimer) {
+    clearTimeout(searchTimer)
+  }
+  
+  // 300ms 防抖
+  searchTimer = setTimeout(async () => {
+    searchLoading.value = true
+    try {
+      const res = await groupApi.searchUsers(kw)
+      const list = Array.isArray(res.users) ? res.users : []
+      const existingIds = new Set(members.value.map(m => getUserId(m)))
+      searchResults.value = list.filter(u => !existingIds.has(u.id))
+    } catch (e) {
+      searchResults.value = []
+      console.error('搜索用户失败:', e)
+    } finally {
+      searchLoading.value = false
+    }
+  }, 300)
 }
 
 // 获取用户ID（兼容大小写字段名）
@@ -272,6 +325,7 @@ const inviteMember = async () => {
     ElMessage.success('成员邀请成功')
     showInviteDialog.value = false
     inviteForm.value = { userId: '', role: 'member' }
+    searchResults.value = []
     
     // 刷新成员列表
     await fetchMembers()

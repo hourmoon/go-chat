@@ -155,6 +155,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading, Upload, Document, User, ChatRound } from '@element-plus/icons-vue'
 import request from '../utils/request'
+import { getAuthToken, getUsername, clearAuthToken, getCurrentUserId } from '../utils/auth'
 
 const router = useRouter()
 const message = ref('')
@@ -175,8 +176,8 @@ const currentPage = ref(1)
 const hasMoreMessages = ref(true)
 const isLoadingMore = ref(false)
 
-// 从 localStorage 获取用户名
-const username = computed(() => localStorage.getItem('username') || '未知用户')
+// 从 auth.js 获取用户名（sessionStorage 优先，localStorage 兼容回退）
+const username = computed(() => getUsername() || '未知用户')
 
 // 获取完整的文件URL
 const getFullFileUrl = (fileUrl) => {
@@ -294,7 +295,7 @@ const handleUpload = async (options) => {
   formData.append('file', options.file)
   
   try {
-    const token = localStorage.getItem('token')
+    const token = await getAuthToken()
     const response = await request.post('/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
@@ -388,8 +389,8 @@ const formatDisplayTime = (timestamp) => {
 }
 
 // 初始化 WebSocket 连接
-const initWebSocket = () => {
-  const token = localStorage.getItem('token')
+const initWebSocket = async () => {
+  const token = await getAuthToken()
   if (!token) {
     ElMessage.error('请先登录')
     router.push('/')
@@ -537,8 +538,7 @@ const goToProfile = () => {
 
 // 退出登录
 const logout = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('username')
+  clearAuthToken()
   if (socket.value) {
     socket.value.close()
   }
@@ -546,20 +546,14 @@ const logout = () => {
 }
 
 // 生命周期钩子
-onMounted(() => {
+onMounted(async () => {
   fetchHistoryMessages()
-  initWebSocket()
+  await initWebSocket()
   
-  // 从token中解析用户ID（这里需要根据你的JWT结构进行调整）
-  const token = localStorage.getItem('token')
-  if (token) {
-    try {
-      // 简单解析JWT获取用户ID（实际应用中应该使用更安全的方式）
-      const payload = JSON.parse(atob(token.split('.')[1]))
-      currentUserID.value = payload.userID || 0
-    } catch (error) {
-      console.error('解析用户ID失败:', error)
-    }
+  // 从token中解析用户ID（使用 auth.js）
+  const userId = await getCurrentUserId()
+  if (userId) {
+    currentUserID.value = userId
   }
   
   // 定期刷新在线用户列表

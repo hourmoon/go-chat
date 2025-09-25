@@ -175,6 +175,7 @@ import request from '../utils/request'
 import groupStore from '../stores/groupStore'
 import * as groupApi from '../utils/groupApi'
 import GroupMemberList from '../components/GroupMemberList.vue'
+import { getAuthToken, getUsername, clearAuthToken, getCurrentUserId } from '../utils/auth'
 
 const router = useRouter()
 const route = useRoute()
@@ -202,8 +203,8 @@ currentGroupId.value = parseInt(route.params.groupId)
 // 从groupStore获取当前群组信息
 const currentGroup = computed(() => groupStore.state.currentGroup)
 
-// 从 localStorage 获取用户名
-const username = computed(() => localStorage.getItem('username') || '未知用户')
+// 从 auth.js 获取用户名（sessionStorage 优先，localStorage 兼容回退）
+const username = computed(() => getUsername() || '未知用户')
 
 // 获取完整的文件URL
 const getFullFileUrl = (fileUrl) => {
@@ -315,7 +316,7 @@ const handleUpload = async (options) => {
   formData.append('file', options.file)
   
   try {
-    const token = localStorage.getItem('token')
+    const token = await getAuthToken()
     const response = await request.post('/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
@@ -393,8 +394,8 @@ const formatDisplayTime = (timestamp) => {
 }
 
 // 初始化 WebSocket 连接
-const initWebSocket = () => {
-  const token = localStorage.getItem('token')
+const initWebSocket = async () => {
+  const token = await getAuthToken()
   if (!token) {
     ElMessage.error('请先登录')
     router.push('/')
@@ -548,8 +549,7 @@ const goToProfile = () => {
 
 // 退出登录
 const logout = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('username')
+  clearAuthToken()
   if (socket.value) {
     socket.value.close()
   }
@@ -594,15 +594,10 @@ const fetchCurrentUserRole = async () => {
 
 // 生命周期钩子
 onMounted(async () => {
-  // 从token中解析用户ID
-  const token = localStorage.getItem('token')
-  if (token) {
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]))
-      currentUserID.value = payload.userID || 0
-    } catch (error) {
-      console.error('解析用户ID失败:', error)
-    }
+  // 从token中解析用户ID（使用 auth.js）
+  const userId = await getCurrentUserId()
+  if (userId) {
+    currentUserID.value = userId
   }
   
   // 初始化群组状态
@@ -612,7 +607,7 @@ onMounted(async () => {
   fetchHistoryMessages()
   fetchOnlineMembers()
   fetchCurrentUserRole()
-  initWebSocket()
+  await initWebSocket()
   
   // 定期刷新在线成员列表
   const refreshInterval = setInterval(fetchOnlineMembers, 10000)

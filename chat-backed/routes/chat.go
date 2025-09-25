@@ -89,39 +89,44 @@ func WSHandler(c *gin.Context) {
 	clients[conn] = true
 	mutex.Unlock()
 
-	// 添加用户到在线列表
-	utils.AddOnlineUser(userID, username, conn)
+	// 添加用户到在线列表，检查是否为首个连接
+	isFirstConnection := utils.AddOnlineUser(userID, username, conn)
 
-	// 广播用户上线消息
-	joinMsg := BroadcastMessage{
-		Type:      "user_joined",
-		UserID:    userID,
-		Username:  username,
-		Content:   fmt.Sprintf("%s 加入了聊天室", username),
-		Target:    0,
-		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
-	}
-	broadcast <- joinMsg
-
-	// 确保连接关闭时从客户端映射中移除
-	defer func() {
-		utils.RemoveOnlineUser(userID)
-
-		// 广播用户下线消息
-		leaveMsg := BroadcastMessage{
-			Type:      "user_left",
+	// 仅在首个连接时广播用户上线消息
+	if isFirstConnection {
+		joinMsg := BroadcastMessage{
+			Type:      "user_joined",
 			UserID:    userID,
 			Username:  username,
-			Content:   fmt.Sprintf("%s 离开了聊天室", username),
+			Content:   fmt.Sprintf("%s 加入了聊天室", username),
 			Target:    0,
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
-		broadcast <- leaveMsg
+		broadcast <- joinMsg
+	}
+
+	// 确保连接关闭时从客户端映射中移除
+	defer func() {
+		// 移除用户连接，检查是否为最后一个连接
+		isLastConnection := utils.RemoveOnlineUser(userID, conn)
+
+		// 仅在最后一个连接断开时广播用户下线消息
+		if isLastConnection {
+			leaveMsg := BroadcastMessage{
+				Type:      "user_left",
+				UserID:    userID,
+				Username:  username,
+				Content:   fmt.Sprintf("%s 离开了聊天室", username),
+				Target:    0,
+				CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+			}
+			broadcast <- leaveMsg
+		}
 
 		mutex.Lock()
 		delete(clients, conn)
 		mutex.Unlock()
-		fmt.Printf("❌ 用户断开: %s\n", username)
+		fmt.Printf("❌ 用户连接断开: %s (剩余连接: %d)\n", username, len(utils.GetUserConnections(userID)))
 	}()
 
 	// 监听消息
@@ -255,17 +260,18 @@ func HandleMessages() {
 			// 群聊消息，仅广播给该群在线成员
 			broadcastToGroupMembers(msg, msg.GroupID)
 		} else if msg.Target > 0 {
-			// 私聊消息，只发送给目标用户和发送者
-			utils.OnlineUsers.RLock()
-			// 发送给目标用户
-			if targetUser, exists := utils.OnlineUsers.Users[msg.Target]; exists {
-				sendMessageToClient(targetUser.Conn, msg)
+			// 私聊消息，发送给目标用户和发送者的所有连接
+			// 发送给目标用户的所有连接
+			targetConnections := utils.GetUserConnections(msg.Target)
+			for _, conn := range targetConnections {
+				sendMessageToClient(conn, msg)
 			}
-			// 发送给发送者
-			if sender, exists := utils.OnlineUsers.Users[msg.UserID]; exists {
-				sendMessageToClient(sender.Conn, msg)
+
+			// 发送给发送者的所有连接
+			senderConnections := utils.GetUserConnections(msg.UserID)
+			for _, conn := range senderConnections {
+				sendMessageToClient(conn, msg)
 			}
-			utils.OnlineUsers.RUnlock()
 		} else {
 			// 全局群聊消息，发送给所有用户
 			mutex.RLock()
@@ -295,7 +301,7 @@ func sendMessageToClient(client *websocket.Conn, msg BroadcastMessage) {
 	}
 }
 
-// 辅助函数：向群成员广播消息
+// 辅助函数：向群成员广播消息（支持多连接）
 func broadcastToGroupMembers(msg BroadcastMessage, groupID uint) {
 	// 查询群成员ID列表
 	var memberIDs []uint
@@ -304,14 +310,13 @@ func broadcastToGroupMembers(msg BroadcastMessage, groupID uint) {
 		return
 	}
 
-	// 发送给在线的群成员
-	utils.OnlineUsers.RLock()
+	// 发送给在线群成员的所有连接
 	for _, memberID := range memberIDs {
-		if user, exists := utils.OnlineUsers.Users[memberID]; exists {
-			sendMessageToClient(user.Conn, msg)
+		connections := utils.GetUserConnections(memberID)
+		for _, conn := range connections {
+			sendMessageToClient(conn, msg)
 		}
 	}
-	utils.OnlineUsers.RUnlock()
 }
 
 // SendBroadcastMessage 向广播通道发送消息

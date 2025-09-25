@@ -595,7 +595,7 @@ func getOnlineMembers(c *gin.Context) {
 	var onlineMembers []gin.H
 	utils.OnlineUsers.RLock()
 	for _, memberID := range memberIDs {
-		if _, exists := utils.OnlineUsers.Users[memberID]; exists {
+		if userState, exists := utils.OnlineUsers.Users[memberID]; exists && len(userState.Connections) > 0 {
 			// 获取用户详细信息
 			var userInfo models.User
 			if err := models.DB.First(&userInfo, memberID).Error; err == nil {
@@ -603,7 +603,7 @@ func getOnlineMembers(c *gin.Context) {
 					"id":       userInfo.ID,
 					"username": userInfo.Username,
 					"avatar":   userInfo.Avatar,
-					"status":   "online",
+					"status":   userState.Status,
 				})
 			}
 		}

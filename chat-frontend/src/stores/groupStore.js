@@ -1,6 +1,7 @@
 import { reactive, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as groupApi from '../utils/groupApi'
+import { getAuthToken } from '../utils/auth'
 
 /**
  * 群组状态管理
@@ -89,6 +90,7 @@ const actions = {
     state.loading.messages = true
     try {
       const response = await groupApi.getGroupMessages(groupId, page)
+      const currentUserId = await getCurrentUserId()
       
       // 将消息转换为前端格式
       const messages = response.messages.map(msg => ({
@@ -97,7 +99,7 @@ const actions = {
         sender: msg.username,
         timestamp: new Date(msg.created_at),
         time: formatTime(msg.created_at),
-        isOwn: msg.user_id === getCurrentUserId(),
+        isOwn: msg.user_id === currentUserId,
         isPrivate: false, // 群消息不是私聊
         isSystem: false,
         messageType: msg.message_type || 'text',
@@ -122,12 +124,14 @@ const actions = {
   },
 
   // 添加新消息到当前群组
-  addMessageToGroup(groupId, message) {
+  async addMessageToGroup(groupId, message) {
     if (!groupId) return
     
     if (!state.groupMessages[groupId]) {
       state.groupMessages[groupId] = []
     }
+    
+    const currentUserId = await getCurrentUserId()
     
     // ✅ 重新添加消息格式化逻辑，确保所有消息对象结构一致
     const formattedMessage = {
@@ -136,7 +140,7 @@ const actions = {
       sender: message.username,
       timestamp: new Date(message.created_at || new Date()),
       time: formatTime(message.created_at || new Date()),
-      isOwn: message.user_id === getCurrentUserId(),
+      isOwn: message.user_id === currentUserId,
       isPrivate: false,
       isSystem: false,
       messageType: message.message_type || 'text',
@@ -199,9 +203,9 @@ function formatTime(timeString) {
   return date.toLocaleTimeString()
 }
 
-function getCurrentUserId() {
-  // 从 localStorage 中的 token 解析用户ID
-  const token = localStorage.getItem('token')
+async function getCurrentUserId() {
+  // 从 auth.js 中获取 token 并解析用户ID（sessionStorage 优先，localStorage 兼容回退）
+  const token = await getAuthToken()
   if (!token) return 0
   
   try {

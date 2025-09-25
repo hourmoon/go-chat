@@ -55,6 +55,11 @@ export const getOnlineMembers = (groupId) => {
   return request.get(`/groups/${groupId}/online-members`)
 }
 
+// 按用户名搜索用户
+export const searchUsers = (keyword) => {
+  return request.get('/users/search', { params: { keyword } })
+}
+
 // 修改成员角色
 export const updateMemberRole = (groupId, userId, role) => {
   return request.put(`/groups/${groupId}/members/${userId}/role`, { role })
