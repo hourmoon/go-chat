@@ -256,6 +256,11 @@ func HandleMessages() {
 			if msg.GroupID > 0 {
 				broadcastToGroupMembers(msg, msg.GroupID)
 			}
+		} else if msg.Type == "group_dissolved" {
+			// 群组解散消息，仅广播给该群在线成员
+			if msg.GroupID > 0 {
+				broadcastToGroupMembers(msg, msg.GroupID)
+			}
 		} else if msg.GroupID > 0 {
 			// 群聊消息，仅广播给该群在线成员
 			broadcastToGroupMembers(msg, msg.GroupID)

@@ -68,11 +68,30 @@
             <el-icon><Refresh /></el-icon>
             刷新成员
           </el-button>
+          
+          <!-- 根据用户角色显示不同操作 -->
+          <el-button 
+            v-if="isOwner" 
+            @click="handleDeleteGroup" 
+            type="danger" 
+            size="small"
+          >
+            解散群组
+          </el-button>
+          <el-button 
+            v-else 
+            @click="handleLeaveGroup" 
+            type="warning" 
+            size="small"
+          >
+            退出群组
+          </el-button>
+          
           <el-button @click="goToProfile" type="primary" size="small">
             <el-icon><User /></el-icon>
             个人资料
           </el-button>
-          <el-button @click="logout" type="danger" size="small">退出</el-button>
+          <el-button @click="logout" type="danger" size="small">退出登录</el-button>
         </div>
       </div>
       
@@ -169,7 +188,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, Upload, Document, User, ChatRound, Back, Refresh } from '@element-plus/icons-vue'
 import request from '../utils/request'
 import groupStore from '../stores/groupStore'
@@ -205,6 +224,22 @@ const currentGroup = computed(() => groupStore.state.currentGroup)
 
 // 从 auth.js 获取用户名（sessionStorage 优先，localStorage 兼容回退）
 const username = computed(() => getUsername() || '未知用户')
+
+// 判断当前用户是否为群主（兜底判断）
+const isOwner = computed(() => {
+  // 方式1：通过角色判断
+  if (currentUserRole.value === 'owner') {
+    return true
+  }
+  
+  // 方式2：通过群组信息兜底判断（兼容大小写字段名）
+  const groupOwnerID = currentGroup.value?.OwnerID || currentGroup.value?.owner_id
+  if (groupOwnerID && currentUserID.value && groupOwnerID === currentUserID.value) {
+    return true
+  }
+  
+  return false
+})
 
 // 获取完整的文件URL
 const getFullFileUrl = (fileUrl) => {
@@ -423,6 +458,35 @@ const initWebSocket = async () => {
         // 尝试解析 JSON 消息
         const messageData = JSON.parse(event.data)
         
+        // 处理群组解散消息
+        if (messageData.type === 'group_dissolved') {
+          // 只处理当前群组的解散消息
+          if (messageData.group_id === currentGroupId.value) {
+            // 显示系统消息
+            const newMessage = {
+              content: messageData.content,
+              sender: '系统',
+              timestamp: new Date(),
+              time: formatTime(new Date()),
+              isOwn: false,
+              isPrivate: false,
+              isSystem: true
+            }
+            messages.value.push(newMessage)
+            scrollToBottom()
+            
+            // 延迟跳转，让用户看到解散消息
+            setTimeout(() => {
+              ElMessage.warning('群组已解散，即将返回群组列表')
+              // 刷新群组列表
+              groupStore.actions.fetchUserGroups()
+              // 跳转到群组列表页
+              router.push('/groups')
+            }, 2000)
+          }
+          return
+        }
+        
         // 处理群成员变动消息
         if (messageData.type === 'group_member_joined' || messageData.type === 'group_member_left') {
           // 只处理当前群组的成员变动
@@ -557,11 +621,13 @@ const logout = () => {
 }
 
 // 监听路由变化
-watch(() => route.params.groupId, (newGroupId) => {
+watch(() => route.params.groupId, async (newGroupId) => {
   if (newGroupId) {
     currentGroupId.value = parseInt(newGroupId)
     // 重新加载群组信息和消息
-    groupStore.actions.selectGroup(currentGroupId.value)
+    await groupStore.actions.selectGroup(currentGroupId.value)
+    // 刷新用户角色（切换群聊后需要重新获取角色）
+    await fetchCurrentUserRole()
     fetchHistoryMessages()
     fetchOnlineMembers()
   }
@@ -583,31 +649,91 @@ const handleMemberRemoved = () => {
 const fetchCurrentUserRole = async () => {
   try {
     const response = await groupApi.getGroupMembers(currentGroupId.value)
-    const currentMember = response.members.find(member => member.UserID === currentUserID.value)
+    // 兼容后端大小写字段名
+    const currentMember = response.members.find(member => 
+      (member.UserID || member.user_id) === currentUserID.value
+    )
     if (currentMember) {
-      currentUserRole.value = currentMember.Role
+      // 兼容后端大小写字段名
+      currentUserRole.value = currentMember.Role || currentMember.role
     }
   } catch (error) {
     console.error('获取用户角色失败:', error)
   }
 }
 
+// 处理退出群组
+const handleLeaveGroup = () => {
+  ElMessageBox.confirm(
+    '确定要退出该群组吗？退出后将无法接收群消息。',
+    '退出群组',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  ).then(async () => {
+    try {
+      await groupApi.leaveGroup(currentGroupId.value)
+      ElMessage.success('已退出群组')
+      // 刷新群组列表
+      await groupStore.actions.fetchUserGroups()
+      // 跳转到群组列表页
+      router.push('/groups')
+    } catch (error) {
+      ElMessage.error(error?.error || '退出群组失败')
+    }
+  }).catch(() => {
+    // 用户取消操作
+  })
+}
+
+// 处理解散群组
+const handleDeleteGroup = () => {
+  ElMessageBox.confirm(
+    '确定要解散该群组吗？解散后所有成员都将离开群组，此操作不可恢复。',
+    '解散群组',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'error',
+    }
+  ).then(async () => {
+    try {
+      await groupApi.deleteGroup(currentGroupId.value)
+      ElMessage.success('群组已解散')
+      // 刷新群组列表
+      await groupStore.actions.fetchUserGroups()
+      // 跳转到群组列表页
+      router.push('/groups')
+    } catch (error) {
+      ElMessage.error(error?.error || '解散群组失败')
+    }
+  }).catch(() => {
+    // 用户取消操作
+  })
+}
+
 // 生命周期钩子
 onMounted(async () => {
-  // 从token中解析用户ID（使用 auth.js）
+  // 步骤1：从token中解析用户ID（使用 auth.js）
   const userId = await getCurrentUserId()
   if (userId) {
     currentUserID.value = userId
   }
   
-  // 初始化群组状态
+  // 步骤2：初始化群组状态
   await groupStore.actions.selectGroup(currentGroupId.value)
   
-  // 加载数据
+  // 步骤3：获取用户角色（必须在群组状态初始化后）
+  await fetchCurrentUserRole()
+  
+  // 步骤4：初始化 WebSocket 连接
+  await initWebSocket()
+  
+  // 步骤5：加载历史消息和在线成员
   fetchHistoryMessages()
   fetchOnlineMembers()
-  fetchCurrentUserRole()
-  await initWebSocket()
   
   // 定期刷新在线成员列表
   const refreshInterval = setInterval(fetchOnlineMembers, 10000)

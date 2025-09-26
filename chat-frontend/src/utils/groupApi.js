@@ -69,3 +69,8 @@ export const updateMemberRole = (groupId, userId, role) => {
 export const transferGroupOwnership = (groupId, targetUserId) => {
   return request.post(`/groups/${groupId}/transfer-owner`, { target_user_id: targetUserId })
 }
+
+// 退出群组
+export const leaveGroup = (groupId) => {
+  return request.delete(`/groups/${groupId}/leave`)
+}

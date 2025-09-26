@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"errors"
+	"fmt"
 	"go-chat/middleware"
 	"go-chat/models"
 	"go-chat/utils"
@@ -34,6 +36,7 @@ func GroupsRoutes(r *gin.Engine) {
 		groups.DELETE("/:id/members/:userId", removeGroupMember)  // 移除群成员
 		groups.PUT("/:id/members/:userId/role", updateMemberRole) // 修改成员角色
 		groups.POST("/:id/transfer-owner", transferOwner)         // 转让群主
+		groups.DELETE("/:id/leave", leaveGroup)                   // 退出群组
 
 		// 群消息管理路由
 		groups.GET("/:id/messages", getGroupMessages)       // 获取群聊消息历史
@@ -275,6 +278,13 @@ func deleteGroup(c *gin.Context) {
 		return
 	}
 
+	// 删除群组相关消息（可选）
+	if err := tx.Where("group_id = ?", uint(groupID)).Delete(&models.Message{}).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除群组消息失败"})
+		return
+	}
+
 	// 删除群组记录
 	if err := tx.Delete(&group).Error; err != nil {
 		tx.Rollback()
@@ -284,6 +294,17 @@ func deleteGroup(c *gin.Context) {
 
 	// 提交事务
 	tx.Commit()
+
+	// 发送群组解散广播消息
+	broadcastMsg := BroadcastMessage{
+		Type:      "group_dissolved",
+		GroupID:   uint(groupID),
+		Content:   fmt.Sprintf("群组\"%s\"已被群主解散", group.Name),
+		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	// 发送广播消息
+	SendBroadcastMessage(broadcastMsg)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "群组解散成功",
@@ -786,4 +807,59 @@ func transferOwner(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "群主转让成功",
 	})
+}
+
+// leaveGroup 退出群组
+func leaveGroup(c *gin.Context) {
+	// 解析群组ID
+	groupID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的群组ID"})
+		return
+	}
+
+	// 获取当前用户ID
+	userID := c.MustGet("userID").(uint)
+
+	// 查询用户在该群组中的成员记录
+	var member models.GroupMember
+	err = models.DB.Preload("User").Where("user_id = ? AND group_id = ?", userID, uint(groupID)).First(&member).Error
+
+	// 如果成员不存在，返回200（幂等）
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusOK, gin.H{"message": "已退出群组"})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询成员信息失败"})
+		return
+	}
+
+	// 检查用户角色，群主不能直接退出
+	if member.Role == "owner" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "群主不能直接退出，请先转让群主或解散群组"})
+		return
+	}
+
+	// 删除成员记录
+	if err := models.DB.Delete(&member).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "退出群组失败"})
+		return
+	}
+
+	// 发送群成员离开通知
+	broadcastMsg := BroadcastMessage{
+		Type:      "group_member_left",
+		UserID:    userID,
+		Username:  member.User.Username,
+		Content:   fmt.Sprintf("%s 离开了群组", member.User.Username),
+		GroupID:   uint(groupID),
+		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	// 发送广播消息
+	SendBroadcastMessage(broadcastMsg)
+
+	c.JSON(http.StatusOK, gin.H{"message": "已退出群组"})
 }

@@ -65,6 +65,34 @@
               <el-icon><Right /></el-icon>
               进入群聊
             </el-button>
+            
+            <!-- 根据用户角色显示不同操作 -->
+            <el-dropdown @command="(command) => handleGroupAction(command, group)" trigger="click">
+              <el-button size="small" type="info" plain>
+                <el-icon><MoreFilled /></el-icon>
+                更多
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item 
+                    v-if="isGroupOwner(group)" 
+                    command="delete"
+                    class="danger-item"
+                  >
+                    <el-icon><Delete /></el-icon>
+                    解散群组
+                  </el-dropdown-item>
+                  <el-dropdown-item 
+                    v-else 
+                    command="leave"
+                    class="warning-item"
+                  >
+                    <el-icon><Close /></el-icon>
+                    退出群组
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
       </div>
@@ -131,8 +159,9 @@
 import { onMounted, ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Loading, ChatDotRound, ChatRound, User, Right, Plus } from '@element-plus/icons-vue'
+import { Loading, ChatDotRound, ChatRound, User, Right, Plus, MoreFilled, Delete, Close } from '@element-plus/icons-vue'
 import groupStore from '../stores/groupStore'
+import * as groupApi from '../utils/groupApi'
 
 const router = useRouter()
 const defaultAvatar = 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png'
@@ -232,6 +261,74 @@ const resetCreateForm = () => {
     description: '',
     avatar: ''
   })
+}
+
+// 判断是否为群主
+const isGroupOwner = (group) => {
+  // 从 localStorage 获取当前用户信息
+  const token = localStorage.getItem('token')
+  if (!token) return false
+  
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    const currentUserId = payload.userID || 0
+    return group.OwnerID === currentUserId || group.owner_id === currentUserId
+  } catch (error) {
+    console.error('解析用户ID失败:', error)
+    return false
+  }
+}
+
+// 处理群组操作
+const handleGroupAction = (command, group) => {
+  const groupId = group.ID || group.id
+  const groupName = group.Name || group.name
+  
+  if (command === 'leave') {
+    // 退出群组
+    ElMessageBox.confirm(
+      `确定要退出群组"${groupName}"吗？退出后将无法接收群消息。`,
+      '退出群组',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    ).then(async () => {
+      try {
+        await groupApi.leaveGroup(groupId)
+        ElMessage.success('已退出群组')
+        // 刷新群组列表
+        await groupStore.actions.fetchUserGroups()
+      } catch (error) {
+        ElMessage.error(error?.error || '退出群组失败')
+      }
+    }).catch(() => {
+      // 用户取消操作
+    })
+  } else if (command === 'delete') {
+    // 解散群组
+    ElMessageBox.confirm(
+      `确定要解散群组"${groupName}"吗？解散后所有成员都将离开群组，此操作不可恢复。`,
+      '解散群组',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'error',
+      }
+    ).then(async () => {
+      try {
+        await groupApi.deleteGroup(groupId)
+        ElMessage.success('群组已解散')
+        // 刷新群组列表
+        await groupStore.actions.fetchUserGroups()
+      } catch (error) {
+        ElMessage.error(error?.error || '解散群组失败')
+      }
+    }).catch(() => {
+      // 用户取消操作
+    })
+  }
 }
 
 // 生命周期钩子
@@ -438,5 +535,24 @@ onMounted(() => {
     margin-left: 0;
     margin-top: 12px;
   }
+}
+
+/* 下拉菜单项样式 */
+:deep(.danger-item) {
+  color: #f56c6c;
+}
+
+:deep(.danger-item:hover) {
+  color: #f56c6c;
+  background-color: #fef0f0;
+}
+
+:deep(.warning-item) {
+  color: #e6a23c;
+}
+
+:deep(.warning-item:hover) {
+  color: #e6a23c;
+  background-color: #fdf6ec;
 }
 </style>
