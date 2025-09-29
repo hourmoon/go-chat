@@ -17,10 +17,10 @@ type User struct {
 	ID        uint   `gorm:"primaryKey"`
 	Username  string `gorm:"unique"`
 	Password  string
-	Avatar    string    `gorm:"default:''"`        // 头像URL
-	Bio       string    `gorm:"type:text"`         // 个性签名
-	Status    string    `gorm:"default:'offline'"` // 状态: online, offline, busy, away
-	LastSeen  time.Time // 最后在线时间
+	Avatar    string     `gorm:"default:''"`        // 头像URL
+	Bio       string     `gorm:"type:text"`         // 个性签名
+	Status    string     `gorm:"default:'offline'"` // 状态: online, offline, busy, away
+	LastSeen  *time.Time `gorm:"default:null"`      // 最后在线时间（可为空，避免0000-00-00）
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -36,6 +36,9 @@ type Friendship struct {
 }
 
 // 为用户和好友关系创建索引
+// TableName 设置Friendship模型对应的数据库表名
+// 这是一个方法，属于Friendship结构体
+// 返回值为字符串类型，表示数据库中的表名
 func (Friendship) TableName() string {
 	return "friendships"
 }

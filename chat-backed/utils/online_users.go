@@ -47,10 +47,11 @@ func AddOnlineUser(userID uint, username string, conn *websocket.Conn) (isFirstC
 		var user models.User
 		models.DB.First(&user, userID)
 
-		// 更新数据库状态为在线
+		// 更新数据库状态为在线（使用指针避免零时间）
+		now := time.Now()
 		models.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
 			"status":    "online",
-			"last_seen": time.Now(),
+			"last_seen": &now,
 		})
 
 		userState = &OnlineUserState{
@@ -89,10 +90,11 @@ func RemoveOnlineUser(userID uint, conn *websocket.Conn) (isLastConnection bool)
 
 	// 如果是最后一个连接，则将用户标记为离线
 	if len(userState.Connections) == 0 {
-		// 更新数据库状态为离线
+		// 更新数据库状态为离线（使用指针避免零时间）
+		now := time.Now()
 		models.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
 			"status":    "offline",
-			"last_seen": time.Now(),
+			"last_seen": &now,
 		})
 
 		// 从在线用户列表中移除
@@ -185,9 +187,10 @@ func CleanInactiveUsers() {
 		for userID, userState := range OnlineUsers.Users {
 			if time.Since(userState.LastSeen) > 10*time.Minute {
 				// 更新数据库状态为离线
+				now := time.Now()
 				models.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
 					"status":    "offline",
-					"last_seen": time.Now(),
+					"last_seen": &now,
 				})
 				delete(OnlineUsers.Users, userID)
 			}
