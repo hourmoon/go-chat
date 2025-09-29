@@ -5,6 +5,7 @@ import Profile from '../views/Profile.vue'
 import Groups from '../views/Groups.vue'
 import GroupChat from '../views/GroupChat.vue'
 import { ElMessage } from 'element-plus'
+import { getAuthToken } from '../utils/auth'
 
 const routes = [
   { path: '/', name: 'Login', component: Login },
@@ -40,8 +41,9 @@ const router = createRouter({
 })
 
 // ✅ 添加全局守卫（关键补充）
-router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token')
+router.beforeEach(async (to, from, next) => {
+  // 使用 auth.js 获取token（sessionStorage 优先，localStorage 兼容回退）
+  const token = await getAuthToken()
 
   if (to.meta.requiresAuth && !token) {
     ElMessage.error('请先登录')

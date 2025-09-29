@@ -107,6 +107,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Loading, Avatar as UserGroup } from '@element-plus/icons-vue'
 import groupStore from '../stores/groupStore'
+import { getAuthToken } from '../utils/auth'
 
 // 响应式数据
 const showCreateDialog = ref(false)
@@ -193,8 +194,8 @@ onMounted(async () => {
     }
   } catch (error) {
     console.error('❌ 认证检查失败:', error)
-    // 降级处理：使用原来的方式
-    const token = localStorage.getItem('token')
+    // 降级处理：使用 auth.js 方式
+    const token = await getAuthToken()
     if (token) {
       groupStore.actions.fetchUserGroups()
     }

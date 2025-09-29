@@ -61,6 +61,7 @@
 
 <script>
 import request from '@/utils/request'
+import { setAuthToken, setUsername } from '@/utils/auth'
 
 export default {
   name: 'Login',
@@ -81,10 +82,11 @@ export default {
         request.post('/login', {
           username: this.form.userName,
           password: this.form.passWord
-        }).then(res => {
+        }).then(async res => {
           this.loading = false
-          localStorage.setItem('token', res.token)
-          localStorage.setItem('username', res.username)
+          // 使用 auth.js 设置认证信息（sessionStorage 优先，清理 localStorage）
+          await setAuthToken(res.token)
+          setUsername(res.username)
           this.$router.push('/chat')
         }).catch(err => {
           this.loading = false

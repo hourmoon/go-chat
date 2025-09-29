@@ -162,6 +162,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, ChatDotRound, ChatRound, User, Right, Plus, MoreFilled, Delete, Close } from '@element-plus/icons-vue'
 import groupStore from '../stores/groupStore'
 import * as groupApi from '../utils/groupApi'
+import { getAuthToken } from '../utils/auth'
 
 const router = useRouter()
 const defaultAvatar = 'https://cube.elemecdn.com/0/88/03b0d39583f48206768a7534e55bcpng.png'
@@ -263,20 +264,26 @@ const resetCreateForm = () => {
   })
 }
 
-// 判断是否为群主
-const isGroupOwner = (group) => {
-  // 从 localStorage 获取当前用户信息
-  const token = localStorage.getItem('token')
-  if (!token) return false
+// 当前用户ID
+const currentUserId = ref(0)
+
+// 初始化当前用户ID
+const initCurrentUserId = async () => {
+  const token = await getAuthToken()
+  if (!token) return
   
   try {
     const payload = JSON.parse(atob(token.split('.')[1]))
-    const currentUserId = payload.userID || 0
-    return group.OwnerID === currentUserId || group.owner_id === currentUserId
+    currentUserId.value = payload.userID || 0
   } catch (error) {
     console.error('解析用户ID失败:', error)
-    return false
   }
+}
+
+// 判断是否为群主
+const isGroupOwner = (group) => {
+  if (!currentUserId.value) return false
+  return group.OwnerID === currentUserId.value || group.owner_id === currentUserId.value
 }
 
 // 处理群组操作
@@ -332,7 +339,9 @@ const handleGroupAction = (command, group) => {
 }
 
 // 生命周期钩子
-onMounted(() => {
+onMounted(async () => {
+  // 初始化当前用户ID
+  await initCurrentUserId()
   // 加载用户群组列表
   groupStore.actions.fetchUserGroups()
 })
