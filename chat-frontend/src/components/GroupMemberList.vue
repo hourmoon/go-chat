@@ -30,21 +30,21 @@
           <div class="member-name">{{ getUserName(member) }}</div>
           <div class="member-role">
             <el-tag 
-              :type="getRoleType(member.Role)" 
+              :type="getRoleType(getMemberRole(member))" 
               size="small"
             >
-              {{ getRoleText(member.Role) }}
+              {{ getRoleText(getMemberRole(member)) }}
             </el-tag>
           </div>
           <div class="member-join-time">
-            {{ formatJoinTime(member.JoinedAt) }}
+            {{ formatJoinTime(getMemberJoinedAt(member)) }}
           </div>
         </div>
         <div class="member-actions" v-if="showActions(member)">
           <!-- 角色切换按钮（仅群主可见） -->
-          <div v-if="currentUserRole === 'owner' && member.Role !== 'owner'">
+          <div v-if="currentUserRole === 'owner' && getMemberRole(member) !== 'owner'">
             <el-button
-              v-if="member.Role === 'member'"
+              v-if="getMemberRole(member) === 'member'"
               @click="changeRole(member, 'admin')"
               type="warning"
               size="small"
@@ -52,7 +52,7 @@
               设为管理员
             </el-button>
             <el-button
-              v-else-if="member.Role === 'admin'"
+              v-else-if="getMemberRole(member) === 'admin'"
               @click="changeRole(member, 'member')"
               type="info"
               size="small"
@@ -77,8 +77,8 @@
             @click="confirmRemoveMember(member)" 
             type="danger" 
             size="small"
-            :disabled="member.Role === 'owner'"
-            :style="currentUserRole === 'owner' && member.Role !== 'owner' ? 'margin-left: 8px;' : ''"
+            :disabled="getMemberRole(member) === 'owner'"
+            :style="currentUserRole === 'owner' && getMemberRole(member) !== 'owner' ? 'margin-left: 8px;' : ''"
           >
             移除
           </el-button>
@@ -217,21 +217,42 @@ const searchUserByName = (query) => {
   }, 300)
 }
 
+// 获取成员关联的用户对象（兼容大小写）
+const getMemberUser = (member) => {
+  // 兼容后端返回的不同字段格式
+  return member.User || member.user || member
+}
+
 // 获取用户ID（兼容大小写字段名）
 const getUserId = (member) => {
-  return member.UserID || member.user_id
+  // 兼容多种可能的字段格式
+  const user = getMemberUser(member)
+  return member.UserID || member.user_id || 
+         user.ID || user.id || 
+         member.ID || member.id
 }
 
-// 获取用户名（兼容大小写字段名）
+// 获取成员角色（兼容大小写字段名）
+const getMemberRole = (member) => {
+  return member.Role || member.role || 'member'
+}
+
+// 获取加入时间（兼容大小写字段名）
+const getMemberJoinedAt = (member) => {
+  return member.JoinedAt || member.joined_at || 
+         member.CreatedAt || member.created_at || ''
+}
+
+// 获取用户名
 const getUserName = (member) => {
-  const user = member.User || member.user
-  return user?.Username || user?.username || '未知用户'
+  const user = getMemberUser(member)
+  return user.Username || user.username || '未知用户'
 }
 
-// 获取用户头像（兼容大小写字段名）
+// 获取用户头像
 const getUserAvatar = (member) => {
-  const user = member.User || member.user
-  const avatar = user?.Avatar || user?.avatar
+  const user = getMemberUser(member)
+  const avatar = user.Avatar || user.avatar
   return avatar ? getFullAvatarUrl(avatar) : defaultAvatar
 }
 
@@ -274,7 +295,7 @@ const canInvite = computed(() => {
 
 // 检查是否显示操作按钮
 const showActions = (member) => {
-  return canRemoveMember(member) || (props.currentUserRole === 'owner' && member.Role !== 'owner')
+  return canRemoveMember(member) || (props.currentUserRole === 'owner' && getMemberRole(member) !== 'owner')
 }
 
 // 检查是否可以移除某个成员
@@ -285,12 +306,12 @@ const canRemoveMember = (member) => {
   }
   
   // 群主不能被移除
-  if (member.Role === 'owner') {
+  if (getMemberRole(member) === 'owner') {
     return false
   }
   
   // 管理员不能移除其他管理员，只有群主可以
-  if (member.Role === 'admin' && props.currentUserRole !== 'owner') {
+  if (getMemberRole(member) === 'admin' && props.currentUserRole !== 'owner') {
     return false
   }
   
@@ -301,10 +322,28 @@ const canRemoveMember = (member) => {
 const fetchMembers = async () => {
   try {
     const response = await groupApi.getGroupMembers(props.groupId)
-    members.value = response.members || []
+    // 确保为数组并兼容后端返回的字段格式
+    const memberList = response.members || response.Members || []
+    members.value = Array.isArray(memberList) ? memberList : []
+    
+    console.log('✅ 群成员列表加载成功:', members.value.length, '个成员')
+    
+    // 调试：验证辅助函数兼容性
+    if (members.value.length > 0) {
+      const firstMember = members.value[0]
+      console.log('🔍 成员数据格式验证:', {
+        原始数据: firstMember,
+        用户ID: getUserId(firstMember),
+        角色: getMemberRole(firstMember),
+        用户名: getUserName(firstMember),
+        头像: getUserAvatar(firstMember),
+        加入时间: getMemberJoinedAt(firstMember)
+      })
+    }
   } catch (error) {
     console.error('获取群成员失败:', error)
     ElMessage.error('获取群成员失败')
+    members.value = [] // 确保出错时也是数组
   }
 }
 
