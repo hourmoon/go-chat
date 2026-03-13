@@ -25,6 +25,7 @@ var upgrader = websocket.Upgrader{
 // 定义广播消息的结构
 type BroadcastMessage struct {
 	Type        string `json:"type"`
+	ID          uint   `json:"id"`           // 消息ID（用于已读状态）
 	UserID      uint   `json:"user_id"`
 	Username    string `json:"username"`
 	Content     string `json:"content"`
@@ -34,6 +35,7 @@ type BroadcastMessage struct {
 	FileSize    int64  `json:"file_size"`
 	Target      uint   `json:"target"`   // 0表示全局/群聊，>0表示私聊目标用户ID
 	GroupID     uint   `json:"group_id"` // 群组ID，0表示全局聊天，>0表示群聊
+	ReadCount   int    `json:"read_count"` // 已读人数
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -216,12 +218,13 @@ func WSHandler(c *gin.Context) {
 		if err := models.DB.Create(&message).Error; err != nil {
 			fmt.Printf("保存消息到数据库失败: %v\n", err)
 		} else {
-			fmt.Printf("消息已保存到数据库: %s: %s\n", username, content)
+			fmt.Printf("消息已保存到数据库: ID=%d, %s: %s\n", message.ID, username, content)
 		}
 
 		// 构建广播消息
 		broadcastMsg := BroadcastMessage{
 			Type:        "message",
+			ID:          message.ID,
 			UserID:      userID,
 			Username:    username,
 			Content:     content,
@@ -231,6 +234,7 @@ func WSHandler(c *gin.Context) {
 			FileSize:    fileSize,
 			Target:      target,
 			GroupID:     groupID,
+			ReadCount:   message.ReadCount,
 			CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
 		}
 		// 给广播通道发送消息

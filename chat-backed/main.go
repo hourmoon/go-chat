@@ -64,6 +64,12 @@ func main() {
 	// 注册群组路由
 	routes.GroupsRoutes(r)
 
+	// 消息已读状态路由
+	r.PUT("/messages/:id/read", middleware.JWTAuthMiddleware(), routes.MarkMessageAsRead)
+	r.POST("/messages/read-batch", middleware.JWTAuthMiddleware(), routes.MarkMessagesAsReadBatch)
+	r.GET("/messages/unread-count", middleware.JWTAuthMiddleware(), routes.GetUnreadCount)
+	r.GET("/messages/:id/read-status", middleware.JWTAuthMiddleware(), routes.GetMessageReadStatus)
+
 	log.Println("服务器启动在 :8080")
 	if err := r.Run(":8080"); err != nil {
 		log.Fatal("服务器启动失败:", err)

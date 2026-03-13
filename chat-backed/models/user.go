@@ -78,10 +78,13 @@ func InitDB() {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	// 自动迁移模式
-	DB.AutoMigrate(&User{}, &Message{}, &Friendship{}, &Group{}, &GroupMember{})
+	DB.AutoMigrate(&User{}, &Message{}, &MessageReadStatus{}, &Friendship{}, &Group{}, &GroupMember{})
 
 	// 创建消息表索引
 	CreateMessageIndexes()
+
+	// 创建消息已读状态表索引
+	CreateMessageReadStatusIndexes()
 
 	// 创建群组相关索引
 	CreateGroupIndexes()
@@ -90,5 +93,5 @@ func InitDB() {
 	DB.Exec("CREATE INDEX IF NOT EXISTS idx_friendships_user_friend ON friendships(user_id, friend_id)")
 	DB.Exec("CREATE INDEX IF NOT EXISTS idx_friendships_status ON friendships(status)")
 
-	fmt.Println("✅ 数据库初始化成功，已经创建用户表、消息表、好友关系表、群组表和索引")
+	fmt.Println("✅ 数据库初始化成功，已经创建用户表、消息表、消息已读状态表、好友关系表、群组表和索引")
 }

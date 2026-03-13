@@ -105,6 +105,13 @@
               <div class="file-size">{{ formatFileSize(msg.fileSize) }}</div>
             </div>
           </div>
+                    <!-- 已读状态显示 -->
+            <div v-if="msg.isOwn && !msg.isSystem" class="message-read-status">
+            <span v-if="msg.readCount > 0" class="read-status read">
+              ✓✓ 已读
+            </span>
+            <span v-else class="read-status unread">✓ 未读</span>
+          </div>
           
           <div v-if="msg.isPrivate" class="private-label">私聊</div>
         </div>
@@ -233,7 +240,8 @@ const fetchHistoryMessages = async (loadMore = false) => {
       messageType: msg.message_type || 'text',
       fileUrl: msg.file_url,
       fileName: msg.file_name,
-      fileSize: msg.file_size
+      fileSize: msg.file_size,
+      readCount: msg.read_count || 0
     }))
     
     if (loadMore) {
@@ -435,6 +443,20 @@ const initWebSocket = async () => {
           scrollToBottom()
           return
         }
+                // 处理已读回执
+                if (messageData.type === 'read_receipt') {
+          try {
+            const receiptData = JSON.parse(messageData.content)
+            const msgIndex = messages.value.findIndex(m => m.id === receiptData.message_id)
+            if (msgIndex !== -1) {
+              messages.value[msgIndex].readCount = receiptData.read_count
+              console.log(`✅ 消息已读: messageID=${receiptData.message_id}, readCount=${receiptData.read_count}`)
+            }
+          } catch (e) {
+            console.error('解析已读回执失败:', e)
+          }
+          return
+        }
         
         // 处理普通消息
         if (messageData.type === 'message') {
@@ -454,7 +476,9 @@ const initWebSocket = async () => {
             messageType: messageData.message_type || 'text',
             fileUrl: messageData.file_url,
             fileName: messageData.file_name,
-            fileSize: messageData.file_size
+            fileSize: messageData.file_size,
+            id: messageData.id,                    // 去掉 || Date.now()
+            readCount: messageData.read_count // 改为 read_count
           }
           
           // 如果是私聊消息，只有相关用户能看到
@@ -463,6 +487,12 @@ const initWebSocket = async () => {
               messageData.user_id === currentUserID.value) {
             messages.value.push(newMessage)
             scrollToBottom()
+            // 如果不是自己发送的消息，自动标记为已读
+            if (messageData.user_id !== currentUserID.value && messageData.id) {
+              setTimeout(() => {
+                markMessageAsRead(messageData.id)
+              }, 1000)
+            }
           }
         }
       } catch (error) {
@@ -517,6 +547,18 @@ const sendMessage = () => {
   }
 }
 
+const markMessageAsRead = async (messageId) => {
+  if (!messageId) return
+  
+  try {
+    const response = await request.put(`/messages/${messageId}/read`)
+    if (response.success) {
+      console.log(`✅ 消息已标记为已读: messageID=${messageId}`)
+    }
+  } catch (error) {
+    console.error('标记消息已读失败:', error)
+  }
+}
 // 滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
@@ -914,5 +956,28 @@ onUnmounted(() => {
 
 .status-dot.disconnected {
   background-color: #f5222d;
+}
+
+/* 已读状态样式 */
+.message-read-status {
+  margin-top: 5px;
+  font-size: 12px;
+  text-align: right;
+}
+
+.read-status {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.read-status.read {
+  color: #52c41a;
+  font-weight: 500;
+}
+
+.read-status.unread {
+  color: #999;
 }
 </style>
