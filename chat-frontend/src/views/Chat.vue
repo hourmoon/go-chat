@@ -250,6 +250,10 @@ const fetchHistoryMessages = async (loadMore = false) => {
     } else {
       messages.value = newMessages
       scrollToBottom()
+      // 初次加载完成后，标记底部可见的未读消息为已读
+      nextTick(() => {
+        markVisibleMessagesAsRead()
+      })
     }
     
     // 检查是否还有更多消息
@@ -263,14 +267,30 @@ const fetchHistoryMessages = async (loadMore = false) => {
   }
 }
 
-// 添加滚动监听，实现无限滚动
+// 判断聊天框是否已滚动到底部（误差20px以内）
+const isScrolledToBottom = () => {
+  if (!chatBox.value) return false
+  const { scrollTop, scrollHeight, clientHeight } = chatBox.value
+  return scrollHeight - scrollTop - clientHeight < 20
+}
+
+// 标记底部可见的未读消息为已读（只有用户真正看到才触发）
+const markVisibleMessagesAsRead = () => {
+  if (!isScrolledToBottom()) return
+  messages.value.forEach(msg => {
+    if (!msg.isOwn && !msg.isSystem && msg.id && msg.readCount === 0) {
+      markMessageAsRead(msg.id)
+      msg.readCount = 1
+    }
+  })
+}
+
+// 滚动监听：上拉加载更多 + 滚到底部时标记已读
 const handleScroll = () => {
-  if (!chatBox.value || isLoadingMore.value || !hasMoreMessages.value) return
-  
-  const scrollTop = chatBox.value.scrollTop
-  if (scrollTop < 100) {
+  if (!isLoadingMore.value && hasMoreMessages.value && chatBox.value?.scrollTop < 100) {
     fetchHistoryMessages(true)
   }
+  markVisibleMessagesAsRead()
 }
 
 // 获取在线用户列表
@@ -487,11 +507,14 @@ const initWebSocket = async () => {
               messageData.user_id === currentUserID.value) {
             messages.value.push(newMessage)
             scrollToBottom()
-            // 如果不是自己发送的消息，自动标记为已读
+            // 消息滚动到底部后才标记已读（用户确实看到了该消息）
+            // 仅在聊天框已滚动到底部时才标记为已读
             if (messageData.user_id !== currentUserID.value && messageData.id) {
-              setTimeout(() => {
-                markMessageAsRead(messageData.id)
-              }, 1000)
+              nextTick(() => {
+                if (isScrolledToBottom()) {
+                  markMessageAsRead(messageData.id)
+                }
+              })
             }
           }
         }
@@ -976,7 +999,6 @@ onUnmounted(() => {
   color: #52c41a;
   font-weight: 500;
 }
-
 .read-status.unread {
   color: #999;
 }
