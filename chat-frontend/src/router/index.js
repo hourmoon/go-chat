@@ -6,6 +6,7 @@ import Groups from '../views/Groups.vue'
 import GroupChat from '../views/GroupChat.vue'
 import { ElMessage } from 'element-plus'
 import { getAuthToken } from '../utils/auth'
+import { useUserStore } from '../stores/userStore'
 
 const routes = [
   { path: '/', name: 'Login', component: Login },
@@ -13,7 +14,7 @@ const routes = [
     path: '/chat',
     name: 'Chat',
     component: Chat,
-    meta: { requiresAuth: true } // ✅ 标记这个路由需要登录
+    meta: { requiresAuth: true }
   },
   {
     path: '/profile',
@@ -40,16 +41,22 @@ const router = createRouter({
   routes
 })
 
-// ✅ 添加全局守卫（关键补充）
+// ✅ 全局路由守卫
 router.beforeEach(async (to, from, next) => {
-  // 使用 auth.js 获取token（sessionStorage 优先，localStorage 兼容回退）
   const token = await getAuthToken()
 
   if (to.meta.requiresAuth && !token) {
     ElMessage.error('请先登录')
-    next('/') // 重定向到登录页
+    next('/')
   } else {
-    next() // 允许跳转
+    // 已登录且跳转到受保护路由时，预加载用户信息
+    if (token && to.meta.requiresAuth) {
+      const userStore = useUserStore()
+      if (!userStore.profile.id) {
+        userStore.fetchProfile().catch(() => {})
+      }
+    }
+    next()
   }
 })
 

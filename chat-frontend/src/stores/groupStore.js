@@ -1,106 +1,92 @@
-import { reactive, computed } from 'vue'
+import { defineStore, getActivePinia } from 'pinia'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as groupApi from '../utils/groupApi'
-import { getAuthToken } from '../utils/auth'
+import { getCurrentUserId } from '../utils/auth'
 
 /**
  * 群组状态管理
- * 使用 Vue 3 的 reactive API 实现简单的状态管理
+ * 使用 Pinia defineStore（setup 风格）
+ * 默认导出兼容层，保持 Groups.vue/GroupChat.vue 的原有调用方式不变：
+ *   groupStore.state.xxx
+ *   groupStore.actions.xxx
  */
-
-// 群组状态
-const state = reactive({
-  // 用户加入的群组列表
-  groupList: [],
-  // 当前选中的群组ID，null表示没有选中群组，0表示全局聊天
-  currentGroupId: null,
-  // 各个群组的消息缓存，以groupId为键存储消息数组
-  groupMessages: {},
-  // 加载状态
-  loading: {
+export const useGroupStore = defineStore('group', () => {
+  // ── 状态 ──────────────────────────────────────────────
+  const groupList = ref([])
+  const currentGroupId = ref(null)
+  const groupMessages = ref({})
+  const currentGroup = ref(null)
+  const loading = ref({
     groupList: false,
     messages: false
-  },
-  // 当前选中的群组信息
-  currentGroup: null
-})
+  })
 
-// 计算属性
-const getters = {
-  // 获取当前群组的消息
-  currentGroupMessages: computed(() => {
-    if (!state.currentGroupId) return []
-    return state.groupMessages[state.currentGroupId] || []
-  }),
-  
-  // 检查是否已加载群组列表
-  hasGroups: computed(() => state.groupList.length > 0),
-  
-  // 获取当前群组信息
-  getCurrentGroup: computed(() => state.currentGroup)
-}
+  // ── 计算属性 ──────────────────────────────────────────
+  const currentGroupMessages = computed(() => {
+    if (!currentGroupId.value) return []
+    return groupMessages.value[currentGroupId.value] || []
+  })
 
-// Actions
-const actions = {
-  // 获取用户的群组列表
-  async fetchUserGroups() {
-    if (state.loading.groupList) return
-    
-    state.loading.groupList = true
+  const hasGroups = computed(() => groupList.value.length > 0)
+
+  // ── 辅助函数 ──────────────────────────────────────────
+  function _formatTime(timeString) {
+    return new Date(timeString).toLocaleTimeString()
+  }
+
+  // ── Actions ───────────────────────────────────────────
+
+  /** 获取用户的群组列表 */
+  async function fetchUserGroups() {
+    if (loading.value.groupList) return
+    loading.value.groupList = true
     try {
       const response = await groupApi.getUserGroups()
-      state.groupList = response.groups || []
-      console.log('✅ 群组列表加载成功:', state.groupList)
+      groupList.value = response.groups || []
+      console.log('✅ 群组列表加载成功:', groupList.value.length, '个')
     } catch (error) {
       console.error('❌ 获取群组列表失败:', error)
       ElMessage.error('获取群组列表失败')
-      state.groupList = []
+      groupList.value = []
     } finally {
-      state.loading.groupList = false
+      loading.value.groupList = false
     }
-  },
+  }
 
-  // 选择群组
-  async selectGroup(groupId) {
-    if (state.currentGroupId === groupId) return
-    
-    // 设置当前群组ID
-    state.currentGroupId = groupId
-    
+  /** 选择群组（切换当前群组） */
+  async function selectGroup(groupId) {
+    if (currentGroupId.value === groupId) return
+    currentGroupId.value = groupId
+
     if (groupId) {
-      // 查找群组详情（兼容大小写字段名）
-      const group = state.groupList.find(g => (g.ID || g.id) === groupId)
-      state.currentGroup = group || null
-      
-      // 加载群组消息
-      await actions.fetchGroupMessages(groupId)
+      const group = groupList.value.find(g => (g.ID || g.id) === groupId)
+      currentGroup.value = group || null
+      await fetchGroupMessages(groupId)
       const groupName = group?.name || group?.Name || '未知群组'
       ElMessage.info(`已切换到群组: ${groupName}`)
     } else {
-      // 切换到全局聊天
-      state.currentGroup = null
+      currentGroup.value = null
       ElMessage.info('已切换到全局聊天')
     }
-  },
+  }
 
-  // 获取群组消息
-  async fetchGroupMessages(groupId, page = 1) {
-    if (!groupId || state.loading.messages) return
-    
-    state.loading.messages = true
+  /** 获取群组消息（页码默认1） */
+  async function fetchGroupMessages(groupId, page = 1) {
+    if (!groupId || loading.value.messages) return
+    loading.value.messages = true
     try {
       const response = await groupApi.getGroupMessages(groupId, page)
       const currentUserId = await getCurrentUserId()
-      
-      // 将消息转换为前端格式
-      const messages = response.messages.map(msg => ({
+
+      const msgs = response.messages.map(msg => ({
         id: msg.id,
         content: msg.content,
         sender: msg.username,
         timestamp: new Date(msg.created_at),
-        time: formatTime(msg.created_at),
+        time: _formatTime(msg.created_at),
         isOwn: msg.user_id === currentUserId,
-        isPrivate: false, // 群消息不是私聊
+        isPrivate: false,
         isSystem: false,
         messageType: msg.message_type || 'text',
         fileUrl: msg.file_url,
@@ -108,38 +94,32 @@ const actions = {
         fileSize: msg.file_size,
         groupId: msg.group_id
       }))
-      
-      // 存储到状态中（消息按时间倒序，最新的在前面）
-      state.groupMessages[groupId] = messages.reverse()
-      
-      console.log(`✅ 群组 ${groupId} 消息加载成功:`, messages.length, '条')
+
+      groupMessages.value[groupId] = msgs.reverse()
+      console.log(`✅ 群组 ${groupId} 消息加载成功:`, msgs.length, '条')
       return response.pagination
     } catch (error) {
       console.error('❌ 获取群组消息失败:', error)
       ElMessage.error('获取群组消息失败')
-      state.groupMessages[groupId] = []
+      groupMessages.value[groupId] = []
     } finally {
-      state.loading.messages = false
+      loading.value.messages = false
     }
-  },
+  }
 
-  // 添加新消息到当前群组
-  async addMessageToGroup(groupId, message) {
+  /** 添加新消息到指定群组（WebSocket 推送时调用） */
+  async function addMessageToGroup(groupId, message) {
     if (!groupId) return
-    
-    if (!state.groupMessages[groupId]) {
-      state.groupMessages[groupId] = []
+    if (!groupMessages.value[groupId]) {
+      groupMessages.value[groupId] = []
     }
-    
     const currentUserId = await getCurrentUserId()
-    
-    // ✅ 重新添加消息格式化逻辑，确保所有消息对象结构一致
-    const formattedMessage = {
-      id: message.ID || message.id || Date.now(), // 兼容 gorm.Model 的 ID
+    const formatted = {
+      id: message.ID || message.id || Date.now(),
       content: message.content,
       sender: message.username,
       timestamp: new Date(message.created_at || new Date()),
-      time: formatTime(message.created_at || new Date()),
+      time: _formatTime(message.created_at || new Date()),
       isOwn: message.user_id === currentUserId,
       isPrivate: false,
       isSystem: false,
@@ -148,78 +128,89 @@ const actions = {
       fileName: message.file_name,
       fileSize: message.file_size,
       groupId: message.group_id
-    };
+    }
+    groupMessages.value[groupId].push(formatted)
+  }
 
-    state.groupMessages[groupId].push(formattedMessage)
-  },
-  // 创建群组
-  async createGroup(groupData) {
+  /** 创建群组 */
+  async function createGroup(groupData) {
     try {
       const response = await groupApi.createGroup(groupData)
       ElMessage.success('群组创建成功')
-      
-      // 刷新群组列表
-      await actions.fetchUserGroups()
-      
+      await fetchUserGroups()
       return response.group
     } catch (error) {
       console.error('❌ 创建群组失败:', error)
       ElMessage.error('创建群组失败')
       throw error
     }
-  },
+  }
 
-  // 退出群组选择
-  exitGroup() {
-    state.currentGroupId = null
-    state.currentGroup = null
-  },
+  /** 退出群组选择 */
+  function exitGroup() {
+    currentGroupId.value = null
+    currentGroup.value = null
+  }
 
-  // 清空群组消息缓存
-  clearGroupMessages(groupId) {
+  /** 清空群组消息缓存 */
+  function clearGroupMessages(groupId) {
     if (groupId) {
-      delete state.groupMessages[groupId]
+      delete groupMessages.value[groupId]
     } else {
-      state.groupMessages = {}
+      groupMessages.value = {}
     }
+  }
+
+  /** 重置所有状态（退出登录时调用） */
+  function resetState() {
+    groupList.value = []
+    currentGroupId.value = null
+    groupMessages.value = {}
+    currentGroup.value = null
+    loading.value = { groupList: false, messages: false }
+  }
+
+  return {
+    groupList,
+    currentGroupId,
+    groupMessages,
+    currentGroup,
+    loading,
+    currentGroupMessages,
+    hasGroups,
+    fetchUserGroups,
+    selectGroup,
+    fetchGroupMessages,
+    addMessageToGroup,
+    createGroup,
+    exitGroup,
+    clearGroupMessages,
+    resetState
+  }
+})
+
+/**
+ * 兼容层默认导出
+ * Groups.vue / GroupChat.vue 中的 groupStore.state.xxx 和 groupStore.actions.xxx
+ * 均通过此代理对象透明地访问真正的 Pinia store 实例。
+ *
+ * Pinia store 实例在组件外（setup 之外）调用时，需要传入 pinia 实例。
+ * 这里使用 getActivePinia() 获取应用级 Pinia 实例，在 app.use(pinia) 之后始终可用。
+ */
+function getStore() {
+  return useGroupStore(getActivePinia())
+}
+
+const groupStoreCompat = {
+  get state() {
+    return getStore()
   },
-
-  // 重置所有状态
-  resetState() {
-    state.groupList = []
-    state.currentGroupId = null
-    state.groupMessages = {}
-    state.currentGroup = null
-    state.loading = {
-      groupList: false,
-      messages: false
-    }
+  get actions() {
+    return getStore()
+  },
+  get getters() {
+    return getStore()
   }
 }
 
-// 辅助函数
-function formatTime(timeString) {
-  const date = new Date(timeString)
-  return date.toLocaleTimeString()
-}
-
-async function getCurrentUserId() {
-  // 从 auth.js 中获取 token 并解析用户ID（sessionStorage 优先，localStorage 兼容回退）
-  const token = await getAuthToken()
-  if (!token) return 0
-  
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    return payload.userID || 0
-  } catch (error) {
-    console.error('解析用户ID失败:', error)
-    return 0
-  }
-}
-
-// 导出状态管理对象
-export default {
-  state,
-  getters,
-  actions
-}
+export default groupStoreCompat
